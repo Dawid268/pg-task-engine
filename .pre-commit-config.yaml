@@ -1,0 +1,29 @@
+# Same tooling as touchpoint-taxonomy, using the project's locked environment.
+# Hooks are opt-in: uv run --locked pre-commit install
+default_stages: [pre-commit, pre-push, manual]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff lint
+        entry: uv run --locked ruff check
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-format-check
+        name: Ruff format check
+        entry: uv run --locked ruff format --check
+        language: system
+        types_or: [python, pyi]
+      - id: mypy
+        name: Strict type checking
+        entry: uv run --locked mypy src app tests run.py
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+      - id: uv-lock-check
+        name: Check lockfile consistency
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$

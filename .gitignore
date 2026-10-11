@@ -1,0 +1,38 @@
+# Python environments, caches and build output
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+
+# Local secrets and cloud state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+application_default_credentials.json
+service-account*.json
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+
+# Editors and local agent scratch
+.idea/
+.vscode/
+.superpowers/
+.codex/
+.claude/
+.serena/
+.DS_Store

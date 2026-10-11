@@ -1,0 +1,50 @@
+name: pg-task-engine-dev
+
+services:
+  api:
+    build:
+      context: .
+    ports:
+      - "127.0.0.1:${API_PORT:-9031}:8080"
+    environment:
+      APP_NAME: "pg-task-engine API"
+      DEBUG: "false"
+      APP_ROOT_PATH: ""
+    cpus: 1.0
+    mem_limit: 256m
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Optional local database only; the reference API does not use it yet.
+  db:
+    profiles: [database]
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: pg_task_engine
+      POSTGRES_USER: pg_task_engine
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-}"
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15439}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    cpus: 1.0
+    mem_limit: 512m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U pg_task_engine -d pg_task_engine"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  postgres_data:
