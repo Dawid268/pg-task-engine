@@ -4,6 +4,27 @@ from importlib import import_module
 from importlib.metadata import requires, version
 from importlib.resources import files
 
+import pg_task_engine
+
+
+def test_package_exports_public_sdk() -> None:
+    expected = (
+        "AttemptStatus",
+        "EngineDefaults",
+        "ExecutionPolicy",
+        "JobProgress",
+        "JobRequest",
+        "JobStatus",
+        "TaskEngine",
+        "TaskRef",
+        "Worker",
+    )
+    assert all(getattr(pg_task_engine, name, None) is not None for name in expected)
+
+
+def test_wheel_migration_is_packaged() -> None:
+    assert files("pg_task_engine").joinpath("migrations/001_initial.sql").is_file()
+
 
 def test_public_version_matches_installed_distribution() -> None:
     """An installed package exposes the same version as its distribution."""
@@ -17,6 +38,8 @@ def test_installed_package_includes_typing_marker() -> None:
     assert files("pg_task_engine").joinpath("py.typed").is_file()
 
 
-def test_foundation_has_no_runtime_dependencies() -> None:
-    """Importing the foundation does not require FastAPI or a database driver."""
-    assert not requires("pg-task-engine")
+def test_library_requires_only_postgresql_runtime_dependencies() -> None:
+    """The installable engine depends on psycopg, not the reference API."""
+    dependencies = requires("pg-task-engine") or []
+    assert any("psycopg" in dependency for dependency in dependencies)
+    assert not any("fastapi" in dependency.lower() for dependency in dependencies)
