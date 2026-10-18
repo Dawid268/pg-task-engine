@@ -108,16 +108,34 @@ Pomiary: całkowity czas Job to różnica `finished_at-created_at` (obejmuje ocz
 - `RETRY_SCHEDULED`: poprzednia próba zakończona; kolejna może zostać przydzielona po `available_at`.
 - `SUCCEEDED`: wynik zwalidowany i zatwierdzony.
 - `FAILED`: zlecenie zakończone bez sukcesu (błąd nieponawialny lub wyczerpany limit).
-- `CANCELLED`: anulowane przed kolejnym przydziałem, bez anulowania aktywnego kodu.
+- `CANCELLED`: anulowane przed przydziałem albo po bezpiecznym
+  zatrzymaniu aktywnej próby i zatwierdzeniu anulowania przez silnik.
 
 Dozwolone przejścia `Job`:
 
 ```text
 QUEUED           -> RUNNING | CANCELLED
 RETRY_SCHEDULED  -> RUNNING | CANCELLED
-RUNNING          -> SUCCEEDED | RETRY_SCHEDULED | FAILED
+RUNNING          -> SUCCEEDED | RETRY_SCHEDULED | FAILED | CANCELLED*
 SUCCEEDED, FAILED, CANCELLED -> [brak przejść]
 ```
+
+`RUNNING -> CANCELLED` (`*`) jest przejściem **warunkowym**. Samo żądanie
+anulowania (`request_cancel`) nie zmienia od razu statusu aktywnego Job:
+pozostaje on `RUNNING` aż do potwierdzenia bezpiecznego zakończenia pracy
+przez wykonawcę. Silnik musi dodatkowo zweryfikować ważność bieżącej próby
+i lease oraz atomowo zatwierdzić zmianę statusu. Nie zakładamy twardego
+zabijania procesu ani cofania już wykonanych skutków zewnętrznych.
+Ostatni zatwierdzony `JobProgress` jest nadal dostępny po anulowaniu.
+Nie stanowi to gwarancji wznowienia operacji biznesowej.
+
+Biblioteczny `can_transition(current, target)` wyznacza jedynie dozwoloną
+**krawędź grafu**: dla `RUNNING -> CANCELLED` zwraca `True`, ale bez danych
+o workerze nie może sprawdzić warunków faktycznego anulowania. Funkcja
+nie zmienia stanu, nie wykonuje I/O i nie sprawdza polityki retry.
+Przyjmuje wyłącznie wartości `JobStatus` (inne typy, w tym surowe stringi,
+oznaczają `TypeError`); niedozwolone przejścia i ponowne ustawienie tego
+samego statusu zwracają `False`.
 
 `AttemptStatus`: `CLAIMED`, `RUNNING`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `LOST`.
 
@@ -129,7 +147,13 @@ SUCCEEDED, FAILED, TIMED_OUT, LOST -> [brak przejść]
 
 **Status próby != status całego zlecenia.** Nieudana próba może prowadzić do `Job.RETRY_SCHEDULED` lub końcowego `Job.FAILED`. Wygaśnięcie lease zamyka próbę jako LOST; jeżeli timeout został wiarygodnie wykryty przez silnik, może zostać oznaczony jako TIMED_OUT. Nie wyciągamy wniosków o tym, co stało się z zewnętrznym efektem ubocznym.
 
-Stany końcowe Job są nieodwracalne. **Ręczny retry** po stanie końcowym tworzy nowy Job (nowe ID i nowe warunki idempotencji); nie zeruje historii poprzednika. Powiązanie z poprzednikiem może być dodane jako osobne metadane administracyjne w kolejnym etapie.
+Stany końcowe Job są nieodwracalne. W szczególności `FAILED` oznacza
+zakończony Job; ponawialny błąd **pojedynczej próby** prowadzi do
+`RUNNING -> RETRY_SCHEDULED`, gdy pozwala na to polityka retry.
+**Ręczny retry** po stanie końcowym tworzy nowy Job (nowe ID i nowe
+warunki idempotencji); nie zeruje historii poprzednika. Powiązanie z
+poprzednikiem może być dodane jako osobne metadane administracyjne w
+kolejnym etapie.
 
 ## 8. Niezmienniki bazy i granice atomowości
 

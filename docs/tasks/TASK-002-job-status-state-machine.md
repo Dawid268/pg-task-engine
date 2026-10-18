@@ -2,7 +2,7 @@
 
 **Projekt:** `pg-task-engine`
 **Gałąź robocza:** `dawid268/feat/job-status-state-machine` (od `dev`)
-**Status:** TODO — zadanie do samodzielnej implementacji
+**Status:** DONE — zrealizowane, zweryfikowane i scalone do `dev`
 **Zakres:** kontrakt stanów `Job`, testy, aktualizacja specyfikacji i README
 
 ## Cel biznesowy

@@ -50,6 +50,38 @@ storage operations must atomically compare revisions and verify the active job
 attempt/lease to prevent stale workers from overwriting progress. The persistence
 and retry mechanisms are not implemented yet.
 
+## JobStatus lifecycle contract
+
+`JobStatus` (`pg_task_engine.job_status`) is a six-value `StrEnum` describing
+the state of an entire Job, **not** a single `JobAttempt`.
+`can_transition(current: JobStatus, target: JobStatus) -> bool` checks whether
+a status change is permitted *in principle*:
+
+| Current Job status | Allowed target statuses |
+| --- | --- |
+| `QUEUED` | `RUNNING`, `CANCELLED` |
+| `RUNNING` | `SUCCEEDED`, `FAILED`, `RETRY_SCHEDULED`, conditionally `CANCELLED` |
+| `RETRY_SCHEDULED` | `RUNNING`, `CANCELLED` |
+| `SUCCEEDED`, `FAILED`, `CANCELLED` | None: these are terminal statuses |
+
+`FAILED` means the **Job** has ended, not merely that one attempt failed.
+When the retry policy allows another attempt, the transition is
+`RUNNING -> RETRY_SCHEDULED`. Manually retrying a terminal Job requires a
+**new Job with a new ID**. A status cannot transition to itself.
+
+`RUNNING -> CANCELLED` is only a *conditional* edge: the future engine must
+first confirm that the active worker has stopped safely, validate the current
+attempt/lease, and atomically persist the cancellation. Requesting
+cancellation alone does not change the Job status or undo external side
+effects. The most recently committed `JobProgress` remains observable.
+
+`can_transition` performs no I/O, does not mutate a Job, and does not validate
+retry policies or cancellation prerequisites. It returns `False` for forbidden
+edges between valid statuses and raises `TypeError` for non-`JobStatus`
+arguments, **including raw strings** even though `StrEnum` compares equal
+to strings with the same value. Durable transition enforcement belongs to
+the future database-backed engine.
+
 ## Local setup
 
 Python 3.13 is the development baseline; uv selects it without changing system Python.
