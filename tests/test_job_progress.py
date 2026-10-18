@@ -116,6 +116,7 @@ def test_job_progress_accepts_unknown_total() -> None:
     [
         (JobProgressErrorCode.COMPLETED_NOT_INTEGER, "completed_not_integer"),
         (JobProgressErrorCode.COMPLETED_NEGATIVE, "completed_negative"),
+        (JobProgressErrorCode.COMPLETED_EXCEEDS_TOTAL, "completed_exceeds_total"),
         (JobProgressErrorCode.TOTAL_NOT_INTEGER, "total_not_integer"),
         (JobProgressErrorCode.TOTAL_NEGATIVE, "total_negative"),
     ],
@@ -125,3 +126,32 @@ def test_job_progress_error_codes_are_stable(
     expected_value: str,
 ) -> None:
     assert code.value == expected_value
+
+
+def test_job_progress_rejects_completed_greater_than_total() -> None:
+    completed = 101
+    total = 100
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=completed,
+            total=total,
+            unit="emails",
+            revision=1,
+            updated_at=timestamp,
+        )
+
+    assert error.value.code is JobProgressErrorCode.COMPLETED_EXCEEDS_TOTAL
+
+
+def test_job_progress_accepts_completed_when_total_is_unknown() -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+    progress = JobProgress(
+        completed=101,
+        total=None,
+        unit="emails",
+        revision=1,
+        updated_at=timestamp,
+    )
+    assert progress.completed == 101

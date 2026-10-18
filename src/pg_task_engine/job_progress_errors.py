@@ -11,6 +11,7 @@ from typing import Final
 class JobProgressErrorCode(StrEnum):
     COMPLETED_NOT_INTEGER = "completed_not_integer"
     COMPLETED_NEGATIVE = "completed_negative"
+    COMPLETED_EXCEEDS_TOTAL = "completed_exceeds_total"
     TOTAL_NOT_INTEGER = "total_not_integer"
     TOTAL_NEGATIVE = "total_negative"
 
@@ -18,6 +19,7 @@ class JobProgressErrorCode(StrEnum):
 _MESSAGES: Final[dict[JobProgressErrorCode, str]] = {
     JobProgressErrorCode.COMPLETED_NOT_INTEGER: "completed must be an integer",
     JobProgressErrorCode.COMPLETED_NEGATIVE: "completed must be a non-negative integer",
+    JobProgressErrorCode.COMPLETED_EXCEEDS_TOTAL: "completed must not exceed total",
     JobProgressErrorCode.TOTAL_NOT_INTEGER: "total must be an integer or None",
     JobProgressErrorCode.TOTAL_NEGATIVE: "total must be a non-negative integer",
 }
