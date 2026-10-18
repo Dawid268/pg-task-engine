@@ -124,6 +124,8 @@ def test_job_progress_accepts_unknown_total() -> None:
             JobProgressErrorCode.REVISION_NOT_INTEGER,
             "revision_not_integer",
         ),
+        (JobProgressErrorCode.UNIT_TYPE_ERROR, "unit_type_error"),
+        (JobProgressErrorCode.UNIT_EMPTY, "unit_empty"),
     ],
 )
 def test_job_progress_error_codes_are_stable(
@@ -195,3 +197,58 @@ def test_job_progress_rejects_non_integer_revision(non_integer_revision: object)
     assert error.value.code is JobProgressErrorCode.REVISION_NOT_INTEGER
     assert isinstance(error.value, TypeError)
     assert str(error.value)
+
+
+@pytest.mark.parametrize(
+    "empty_unit",
+    ["", "   ", "\t"],
+    ids=["empty", "spaces", "tab"],
+)
+def test_job_progress_rejects_blank_unit(
+    empty_unit: str,
+) -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit=empty_unit,
+            revision=1,
+            updated_at=timestamp,
+        )
+    assert error.value.code is JobProgressErrorCode.UNIT_EMPTY
+
+
+@pytest.mark.parametrize(
+    "invalid_unit",
+    [1, True, 1.5, None],
+    ids=["integer", "boolean", "float", "none"],
+)
+def test_job_progress_rejects_not_string_unit(
+    invalid_unit: object,
+) -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+
+    with pytest.raises(JobProgressTypeError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit=cast("str", invalid_unit),
+            revision=1,
+            updated_at=timestamp,
+        )
+    assert error.value.code is JobProgressErrorCode.UNIT_TYPE_ERROR
+
+
+def test_job_progress_keeps_non_blank_unit_whitespace() -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+    progress = JobProgress(
+        completed=0,
+        total=100,
+        unit=" emails ",
+        revision=1,
+        updated_at=timestamp,
+    )
+
+    assert progress.unit == " emails "

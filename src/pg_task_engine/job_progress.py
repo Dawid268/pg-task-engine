@@ -31,3 +31,7 @@ class JobProgress:
             raise JobProgressTypeError(JobProgressErrorCode.REVISION_NOT_INTEGER)
         if self.revision < 0:
             raise JobProgressValueError(JobProgressErrorCode.REVISION_NEGATIVE)
+        if type(self.unit) is not str:
+            raise JobProgressTypeError(JobProgressErrorCode.UNIT_TYPE_ERROR)
+        if self.unit.strip() == "":
+            raise JobProgressValueError(JobProgressErrorCode.UNIT_EMPTY)

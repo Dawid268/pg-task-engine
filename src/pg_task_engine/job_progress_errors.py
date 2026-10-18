@@ -16,6 +16,8 @@ class JobProgressErrorCode(StrEnum):
     TOTAL_NEGATIVE = "total_negative"
     REVISION_NOT_INTEGER = "revision_not_integer"
     REVISION_NEGATIVE = "revision_negative"
+    UNIT_TYPE_ERROR = "unit_type_error"
+    UNIT_EMPTY = "unit_empty"
 
 
 _MESSAGES: Final[dict[JobProgressErrorCode, str]] = {
@@ -26,6 +28,8 @@ _MESSAGES: Final[dict[JobProgressErrorCode, str]] = {
     JobProgressErrorCode.TOTAL_NEGATIVE: "total must be a non-negative integer",
     JobProgressErrorCode.REVISION_NOT_INTEGER: "revision must be an integer",
     JobProgressErrorCode.REVISION_NEGATIVE: "revision must be a non-negative integer",
+    JobProgressErrorCode.UNIT_TYPE_ERROR: "unit must be a string",
+    JobProgressErrorCode.UNIT_EMPTY: "unit must not be empty",
 }
 
 
