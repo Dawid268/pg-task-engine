@@ -1,4 +1,7 @@
+from collections.abc import Mapping
 from enum import StrEnum, unique
+from types import MappingProxyType
+from typing import Final
 
 
 @unique
@@ -11,20 +14,38 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+_ALLOWED_TRANSITIONS: Final[Mapping[JobStatus, frozenset[JobStatus]]] = MappingProxyType(
+    {
+        JobStatus.QUEUED: frozenset({JobStatus.RUNNING, JobStatus.CANCELLED}),
+        JobStatus.RUNNING: frozenset(
+            {
+                JobStatus.SUCCEEDED,
+                JobStatus.FAILED,
+                JobStatus.CANCELLED,
+                JobStatus.RETRY_SCHEDULED,
+            }
+        ),
+        JobStatus.SUCCEEDED: frozenset(),
+        JobStatus.FAILED: frozenset(),
+        JobStatus.RETRY_SCHEDULED: frozenset({JobStatus.RUNNING, JobStatus.CANCELLED}),
+        JobStatus.CANCELLED: frozenset(),
+    }
+)
+
+
 def can_transition(
     current: JobStatus,
     target: JobStatus,
 ) -> bool:
-    allowed_transitions = {
-        JobStatus.QUEUED: {JobStatus.RUNNING, JobStatus.CANCELLED},
-        JobStatus.RUNNING: {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED},
-        JobStatus.SUCCEEDED: set(),
-        JobStatus.FAILED: {JobStatus.RETRY_SCHEDULED, JobStatus.CANCELLED},
-        JobStatus.RETRY_SCHEDULED: {JobStatus.RUNNING, JobStatus.CANCELLED},
-        JobStatus.CANCELLED: set(),
-    }
+    """Check whether the Job lifecycle allows this edge in principle.
 
-    if current not in allowed_transitions:
-        raise ValueError(f"Invalid current job status: {current}")
+    An allowed edge does not authorize a state change. In particular,
+    RUNNING -> CANCELLED requires a safely stopped worker and a valid
+    attempt/lease, verified by the future persistence layer.
+    """
+    if not isinstance(current, JobStatus):
+        raise TypeError("current must be a JobStatus")
+    if not isinstance(target, JobStatus):
+        raise TypeError("target must be a JobStatus")
 
-    return target in allowed_transitions[current]
+    return target in _ALLOWED_TRANSITIONS[current]
