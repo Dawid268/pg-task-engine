@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from dataclasses import FrozenInstanceError
+from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from typing import cast
 
 import pytest
@@ -126,6 +127,9 @@ def test_job_progress_accepts_unknown_total() -> None:
         ),
         (JobProgressErrorCode.UNIT_TYPE_ERROR, "unit_type_error"),
         (JobProgressErrorCode.UNIT_EMPTY, "unit_empty"),
+        (JobProgressErrorCode.UPDATED_AT_TYPE_ERROR, "updated_at_type_error"),
+        (JobProgressErrorCode.UPDATED_AT_NAIVE, "updated_at_naive"),
+        (JobProgressErrorCode.UPDATED_AT_NOT_UTC, "updated_at_not_utc"),
     ],
 )
 def test_job_progress_error_codes_are_stable(
@@ -252,3 +256,122 @@ def test_job_progress_keeps_non_blank_unit_whitespace() -> None:
     )
 
     assert progress.unit == " emails "
+
+
+def test_job_progress_rejects_naive_updated_at() -> None:
+    naive_timestamp = datetime(2026, 10, 15, 10, 0)
+
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit="emails",
+            revision=1,
+            updated_at=naive_timestamp,
+        )
+    assert error.value.code is JobProgressErrorCode.UPDATED_AT_NAIVE
+
+
+@pytest.mark.parametrize(
+    "utc_offset",
+    [timedelta(hours=2), timedelta(hours=-5, minutes=-30)],
+    ids=["positive-offset", "negative-offset"],
+)
+def test_job_progress_rejects_non_utc_updated_at(utc_offset: timedelta) -> None:
+    non_utc_timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=timezone(utc_offset))
+
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit="emails",
+            revision=1,
+            updated_at=non_utc_timestamp,
+        )
+    assert error.value.code is JobProgressErrorCode.UPDATED_AT_NOT_UTC
+
+
+@pytest.mark.parametrize(
+    "invalid_timestamp",
+    [None, "2026-10-15T10:00:00Z", 123, 1.5, date(2026, 10, 15)],
+    ids=["none", "string", "integer", "float", "date-only"],
+)
+def test_job_progress_rejects_non_datetime_updated_at(invalid_timestamp: object) -> None:
+    with pytest.raises(JobProgressTypeError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit="emails",
+            revision=1,
+            updated_at=cast("datetime", invalid_timestamp),
+        )
+    assert error.value.code is JobProgressErrorCode.UPDATED_AT_TYPE_ERROR
+
+
+@pytest.mark.parametrize(
+    "zero_offset_zone",
+    [UTC, timezone(timedelta(0), name="GMT")],
+    ids=["datetime-utc", "other-zero-offset-zone"],
+)
+def test_job_progress_accepts_aware_utc_updated_at(zero_offset_zone: tzinfo) -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=zero_offset_zone)
+    progress = JobProgress(
+        completed=10,
+        total=100,
+        unit="emails",
+        revision=1,
+        updated_at=timestamp,
+    )
+
+    assert progress.updated_at is timestamp
+
+
+@pytest.mark.parametrize(
+    ("completed", "total", "revision"),
+    [(0, 0, 0), (100, 100, 1), (101, None, 5)],
+    ids=["zero-total-and-revision", "completed-equals-total", "unknown-total"],
+)
+def test_job_progress_accepts_boundary_values(
+    completed: int, total: int | None, revision: int
+) -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+    progress = JobProgress(
+        completed=completed,
+        total=total,
+        unit="emails",
+        revision=revision,
+        updated_at=timestamp,
+    )
+
+    assert (progress.completed, progress.total, progress.revision) == (
+        completed,
+        total,
+        revision,
+    )
+
+
+def test_job_progress_is_frozen_and_uses_slots() -> None:
+    progress = JobProgress(
+        completed=2,
+        total=10,
+        unit="emails",
+        revision=1,
+        updated_at=datetime(2026, 10, 15, 10, 0, tzinfo=UTC),
+    )
+
+    attribute = "completed"
+    with pytest.raises(FrozenInstanceError):
+        setattr(progress, attribute, 9)
+    assert not hasattr(progress, "__dict__")
+
+
+def test_job_progress_equality_and_hashing_use_field_values() -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+    first = JobProgress(2, 10, "emails", 1, timestamp)
+    same_values = JobProgress(2, 10, "emails", 1, timestamp)
+    different_revision = JobProgress(2, 10, "emails", 2, timestamp)
+
+    assert first == same_values
+    assert hash(first) == hash(same_values)
+    assert first != different_revision
+    assert len({first, same_values, different_revision}) == 2

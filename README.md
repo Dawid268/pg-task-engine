@@ -2,7 +2,9 @@
 
 A PostgreSQL-backed durable task queue for Python — a learning and open-source portfolio project.
 
-**Status: library packaging and a reference API scaffold only. Task queues, workers, database integration, job migrations and GCP deployment are not implemented.**
+**Status: library packaging, a reference API scaffold, and early domain models
+(`TaskRef`, `JobStatus`, `JobProgress`). Durable task queues, workers, database
+integration, job migrations and GCP deployment are not implemented.**
 
 ## Boilerplate source
 
@@ -22,6 +24,31 @@ Project repository: https://github.com/Dawid268/pg-task-engine
 - `app/` is a repository-only reference FastAPI application, using the source boilerplate's layout. It is not shipped inside the library wheel.
 
 The `api` dependency group contains reference-application dependencies. The `dev` group includes `api` plus testing and quality tools. These groups are not published as library runtime requirements.
+
+## JobProgress domain contract
+
+`JobProgress` (`pg_task_engine.job_progress`) is an immutable snapshot of task progress,
+not a database record or a durable business checkpoint. It does not save data or resume
+partially completed work on its own.
+
+| Field | Contract |
+| --- | --- |
+| `completed` | Non-negative `int` (booleans are rejected). |
+| `total` | Non-negative `int` or `None` when the total is unknown. If set, `completed <= total`; zero is valid. |
+| `unit` | Non-blank `str`, such as `"emails"` or `"files"`. Surrounding whitespace is preserved. |
+| `revision` | Non-negative `int` (starting at zero is allowed), describing the snapshot version. |
+| `updated_at` | A timezone-aware `datetime` with UTC offset exactly zero. Naive datetimes and non-zero offsets are rejected; no automatic timezone conversion occurs. |
+
+Validation raises `JobProgressTypeError` or `JobProgressValueError` with a stable
+`JobProgressErrorCode` in the exception's `.code` property. Consumers must not
+depend on the wording of error messages.
+
+The `frozen=True, slots=True` dataclass provides value-based equality and hashing.
+An individual snapshot only validates that `revision >= 0`; it **cannot** decide
+whether a write is newer than the state currently stored in PostgreSQL. Future
+storage operations must atomically compare revisions and verify the active job
+attempt/lease to prevent stale workers from overwriting progress. The persistence
+and retry mechanisms are not implemented yet.
 
 ## Local setup
 
@@ -88,8 +115,8 @@ Repository instructions are in `AGENTS.md`.
 
 ## Learning milestones
 
-1. Packaging and adapted API boilerplate (current work).
-2. A small typed job model, validation and state transitions, implemented together with tests.
+1. Packaging and adapted API boilerplate (completed).
+2. A small typed job model, validation and state transitions (in progress; initial domain types implemented).
 3. Explicit PostgreSQL migrations and one enqueue/execute/result flow.
 4. Concurrent workers, leases, retries, logs and failure tests.
 5. A real public library API, reference application and GCP deployment.
