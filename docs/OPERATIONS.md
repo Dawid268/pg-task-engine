@@ -8,6 +8,16 @@ must register the task name, version and matching handler/schema validators
 that it is allowed to execute. The installable package does not depend on
 FastAPI or GCP and does not start network listeners.
 
+Persisted task contract versions, attempt limits and progress counts must
+fit PostgreSQL INTEGER; progress revisions and attempt execution duration in
+milliseconds must fit BIGINT. Validation raises a Python domain error for
+oversized values rather than leaking a SQL numeric overflow. Text fields
+are validated for NUL characters and UTF-8 encodability before writing.
+Timeouts, retry delays and worker leases must be positive and no greater
+than 36,500 days to avoid extremely distant timestamp calculations.
+Worker polling intervals have the same upper bound to avoid platform
+threading timeout overflows.
+
 The built-in `Worker` restricts PostgreSQL claims to task names **and**
 versions with handlers registered in that process. A task with no matching
 worker stays queued, retains its attempt count and can run when an appropriate

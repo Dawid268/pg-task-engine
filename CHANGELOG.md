@@ -2,6 +2,16 @@
 
 ## 0.1.0a3 (reliability-fix candidate; not yet published)
 
+- Validate PostgreSQL INTEGER/BIGINT storage limits before persistence:
+  task contract versions, attempt limits, progress counters/revisions and
+  attempt execution durations.
+- Reject timeouts, retry delays or lease durations above 36,500 days
+  rather than allow database timestamp overflows during execution.
+- Reject worker polling intervals above 36,500 days rather than letting
+  the underlying thread wait primitive overflow.
+- Reject unencodable Unicode in application-defined text fields before
+  PostgreSQL operations, with stable progress error codes.
+- Extend CI integration coverage to PostgreSQL 16 and 18 on Python 3.13/3.14.
 - Prevent workers from consuming jobs whose task name/version lacks a
   locally registered handler, leaving such jobs safely queued.
 - Distinguish worker task execution errors (`ValueError`/`TypeError`

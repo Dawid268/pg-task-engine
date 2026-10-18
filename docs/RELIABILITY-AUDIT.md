@@ -16,10 +16,11 @@ whose name ends in `_test`. Other project databases are not involved.
 | Lease fencing | An expired/superseded worker cannot commit stale results |
 | Recovery | An OS-killed worker was reaped and a replacement completed the second attempt |
 | JSONB correctness | Input/output NUL, Unicode, NaN, cycle and 64 KiB limit tests |
+| PostgreSQL integer limits | Domain checks for INTEGER/BIGINT maximum values and UTF-8 text encoding |
 | Migration safety | Version checksums, legacy 001 upgrade, unknown versions and SQL tampering |
 | Client interfaces | CLI enqueue, inspect and migrate tested against PostgreSQL |
 | Packaging | Wheel and sdist, MIT license, bundled migrations, isolated wheel installation |
-| Python versions | Python 3.13 and 3.14 with real PostgreSQL |
+| Python/PostgreSQL versions | Python 3.13 and 3.14 with PostgreSQL 16 and 18 |
 | Dependency compatibility | Locked dependencies, plus a clean Python 3.14 install with latest allowed dev packages |
 | Static assurance | Ruff, strict mypy, Twine and locked-dependency vulnerability audit |
 
@@ -48,6 +49,16 @@ audit databases were removed after the checks.
 4. **Unpinned FastAPI API drift** — fresh FastAPI 0.146+ rejects the
    deprecated constructor `root_path` argument under warnings-as-errors.
    The reference API now sets the ASGI root path without that parameter.
+5. **Unchecked PostgreSQL storage ranges** — numbers above signed INTEGER
+   (task versions, attempt limits, progress counts) or signed BIGINT
+   (progress revision, attempt duration) used to fail at SQL time.
+   Values now fail deterministically during Python validation.
+6. **Unpaired surrogate characters in text** — names, progress units,
+   queue names, keys or manual attempt error descriptions could raise
+   database codec errors. All such values now validate UTF-8 encoding.
+7. **Extreme timedelta values** — PostgreSQL cannot add an almost
+   billion-day timeout/retry delay to its current timestamp. The models
+   now reject durations longer than 36,500 days before enqueue.
 
 These bugs are present in the frozen, historically tagged `v0.1.0a2`
 source. **Do not publish `0.1.0a2`.** The corrected candidate is

@@ -46,10 +46,10 @@ partially completed work on its own.
 
 | Field | Contract |
 | --- | --- |
-| `completed` | Non-negative `int` (booleans are rejected). |
-| `total` | Non-negative `int` or `None` when the total is unknown. If set, `completed <= total`; zero is valid. |
-| `unit` | Non-blank `str`, such as `"emails"` or `"files"`, without PostgreSQL-incompatible NUL. Surrounding whitespace is preserved. |
-| `revision` | Non-negative `int` (starting at zero is allowed), describing the snapshot version. |
+| `completed` | `int` between 0 and 2,147,483,647 (PostgreSQL INTEGER); booleans are rejected. |
+| `total` | `int` between 0 and 2,147,483,647 or `None` when unknown. If set, `completed <= total`; zero is valid. |
+| `unit` | Non-blank valid UTF-8 `str`, such as `"emails"` or `"files"`, without NUL characters. Surrounding whitespace is preserved. |
+| `revision` | `int` between 0 and 9,223,372,036,854,775,807 (PostgreSQL BIGINT). |
 | `updated_at` | A timezone-aware `datetime` with UTC offset exactly zero. Naive datetimes and non-zero offsets are rejected; no automatic timezone conversion occurs. |
 
 Validation raises `JobProgressTypeError` or `JobProgressValueError` with a stable
@@ -135,7 +135,9 @@ payload. The latter accepts nested dictionaries with string keys, lists,
 strings, booleans, integers, finite floats and `None`; it rejects unsupported
 objects, cycles, invalid Unicode, NUL characters in JSON strings or keys,
 and non-finite numbers. Task names, idempotency keys and queue names also
-reject PostgreSQL-incompatible NUL characters. Serialization for the
+reject PostgreSQL-incompatible NUL and invalid UTF-8 characters. Task
+contract versions and `max_attempts` must fit a signed 32-bit PostgreSQL
+INTEGER (1–2,147,483,647). Serialization for the
 64 KiB limit uses UTF-8 with sorted keys, no optional whitespace and literal
 non-ASCII characters (`sort_keys=True`, `separators=(",", ":")`,
 `ensure_ascii=False`). A JSON round-trip copies the input, including nested
@@ -143,9 +145,14 @@ objects. The stored `payload` remains a mutable dictionary; `frozen=True`
 does not freeze nested containers. Treat it as a snapshot before enqueue.
 
 `ExecutionPolicy` accepts optional overrides for `max_attempts >= 1`,
-positive `timedelta` timeout and positive `timedelta` retry delay.
+positive `timedelta` timeout and positive `timedelta` retry delay,
+each no longer than 36,500 days (100 years). The same upper bound applies
+to `EngineDefaults.lease_duration`; extreme durations could otherwise
+overflow the PostgreSQL timestamp arithmetic during claim or retry.
 Unspecified values are resolved by `EngineDefaults` during enqueue. Neither
 `JobRequest` nor `ExecutionPolicy` accesses PostgreSQL or executes tasks.
+Recorded execution duration in milliseconds is limited to signed 64-bit
+BIGINT (0–9,223,372,036,854,775,807), with `None` when not measured.
 
 The bundled `Worker` only claims tasks whose exact `TaskRef` has a handler
 registered in that process. Other task names/versions remain queued for a
