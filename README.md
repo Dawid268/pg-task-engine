@@ -3,7 +3,7 @@
 A PostgreSQL-backed durable task queue for Python 3.13, with a typed SDK,
 real SQL migrations, cooperative workers and an optional reference FastAPI app.
 
-**Status: pre-release candidate `0.1.0a2` (not yet published).**
+**Status: pre-release candidate `0.1.0a3` (not yet published).**
 The core enqueue/claim/execute/result
 flow works with PostgreSQL 16+, including idempotency, leases, retries,
 timeouts, progress, events and cooperative cancellation. It is **not** a
@@ -14,6 +14,8 @@ been performed.
 See [release instructions](docs/RELEASING.md) before publishing. The release
 workflow is deliberately manual and uses PyPI Trusted Publishing; no API
 tokens or production database credentials are stored in this repository.
+See also the [reliability audit](docs/RELIABILITY-AUDIT.md) for verified
+failure scenarios, discovered regressions and remaining operational risks.
 
 ## Architecture and development origin
 
@@ -46,7 +48,7 @@ partially completed work on its own.
 | --- | --- |
 | `completed` | Non-negative `int` (booleans are rejected). |
 | `total` | Non-negative `int` or `None` when the total is unknown. If set, `completed <= total`; zero is valid. |
-| `unit` | Non-blank `str`, such as `"emails"` or `"files"`. Surrounding whitespace is preserved. |
+| `unit` | Non-blank `str`, such as `"emails"` or `"files"`, without PostgreSQL-incompatible NUL. Surrounding whitespace is preserved. |
 | `revision` | Non-negative `int` (starting at zero is allowed), describing the snapshot version. |
 | `updated_at` | A timezone-aware `datetime` with UTC offset exactly zero. Naive datetimes and non-zero offsets are rejected; no automatic timezone conversion occurs. |
 
@@ -131,7 +133,9 @@ request: JobRequest[AppQueue] = JobRequest(
 nonblank idempotency keys up to 128 characters, and a strict JSON **object**
 payload. The latter accepts nested dictionaries with string keys, lists,
 strings, booleans, integers, finite floats and `None`; it rejects unsupported
-objects, cycles, invalid Unicode and non-finite numbers. Serialization for the
+objects, cycles, invalid Unicode, NUL characters in JSON strings or keys,
+and non-finite numbers. Task names, idempotency keys and queue names also
+reject PostgreSQL-incompatible NUL characters. Serialization for the
 64 KiB limit uses UTF-8 with sorted keys, no optional whitespace and literal
 non-ASCII characters (`sort_keys=True`, `separators=(",", ":")`,
 `ensure_ascii=False`). A JSON round-trip copies the input, including nested
@@ -142,6 +146,14 @@ does not freeze nested containers. Treat it as a snapshot before enqueue.
 positive `timedelta` timeout and positive `timedelta` retry delay.
 Unspecified values are resolved by `EngineDefaults` during enqueue. Neither
 `JobRequest` nor `ExecutionPolicy` accesses PostgreSQL or executes tasks.
+
+The bundled `Worker` only claims tasks whose exact `TaskRef` has a handler
+registered in that process. Other task names/versions remain queued for a
+capable worker. Low-level `TaskEngine.claim(..., supported_tasks=None)`
+remains available for custom executors; pass a set of supported `TaskRef`
+values to apply the same database-side filter. Exceptions from a task handler,
+including `ValueError` and `TypeError`, follow retry policy; input/output
+JSON validation failures are non-retryable.
 
 ## Quickstart: persisted task execution
 

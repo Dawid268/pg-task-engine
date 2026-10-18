@@ -45,6 +45,8 @@ class JobProgress:
             raise JobProgressTypeError(JobProgressErrorCode.UNIT_TYPE_ERROR)
         if self.unit.strip() == "":
             raise JobProgressValueError(JobProgressErrorCode.UNIT_EMPTY)
+        if "\x00" in self.unit:
+            raise JobProgressValueError(JobProgressErrorCode.UNIT_CONTAINS_NUL)
 
     def _validate_updated_at(self) -> None:
         if not isinstance(self.updated_at, datetime):

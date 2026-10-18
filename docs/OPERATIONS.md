@@ -8,6 +8,13 @@ must register the task name, version and matching handler/schema validators
 that it is allowed to execute. The installable package does not depend on
 FastAPI or GCP and does not start network listeners.
 
+The built-in `Worker` restricts PostgreSQL claims to task names **and**
+versions with handlers registered in that process. A task with no matching
+worker stays queued, retains its attempt count and can run when an appropriate
+worker registers later. Custom executors should likewise provide their
+supported task set when calling `TaskEngine.claim`; omitting that filter
+retains the low-level claim-any-task API.
+
 The API has a **local alpha** contract; test it and review security controls
 before using it with live data. The gateway, tenant authorization, quotas,
 online schema upgrades and externally supplied handlers are not provided.

@@ -1,7 +1,7 @@
 # Publishing pg-task-engine — release checklist
 
 This document prepares the **installable Python library**, not the optional
-FastAPI reference application. The current candidate is `0.1.0a2`.
+FastAPI reference application. The current candidate is `0.1.0a3`.
 Nothing in this document has published a PyPI distribution or deployed GCP
 infrastructure. Public releases cannot be fully undone; do not reuse a
 published version number.
@@ -73,14 +73,18 @@ unpublished candidate):
 ```bash
 git switch main
 git pull --ff-only origin main
-git tag -a v0.1.0a2 -m "pg-task-engine 0.1.0a2"
-git push origin v0.1.0a2
+git tag -a v0.1.0a3 -m "pg-task-engine 0.1.0a3"
+git push origin v0.1.0a3
 ```
 
 **Do not execute these commands until you intend to publish this particular
 commit.** This project uses `dev` for integration and leaves `main`
 unchanged during ordinary development. A tag push does **not** trigger the
 publication workflow automatically.
+
+The earlier `v0.1.0a2` tag is deliberately immutable and **must not be
+published**: the release audit found unhandled-task claims and incorrect
+retry classification. Create a new reviewed version/tag for these fixes.
 
 ## 4. Manually publish the verified artifacts
 

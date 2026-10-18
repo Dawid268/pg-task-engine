@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.1.0a2 (release-hardening candidate; not yet published)
+## 0.1.0a3 (reliability-fix candidate; not yet published)
+
+- Prevent workers from consuming jobs whose task name/version lacks a
+  locally registered handler, leaving such jobs safely queued.
+- Distinguish worker task execution errors (`ValueError`/`TypeError`
+  can be retryable) from non-retryable input/output validation errors.
+- Reject PostgreSQL-incompatible NUL characters in task names, queue
+  names, idempotency keys, nested JSON, progress units and error metadata.
+- Add real PostgreSQL regression tests for mixed task versions, separate
+  worker processes, CLI end-to-end flows and worker lifecycle.
+- Supersedes the unuploaded `0.1.0a2` release candidate. The `v0.1.0a2`
+  tag remains immutable as a historical snapshot; do not publish its
+  artifacts to TestPyPI/PyPI.
+
+## 0.1.0a2 (superseded alpha candidate; not published)
 
 - Forward-only, checksummed migrations with 001 legacy metadata upgrade,
   unknown-future-version detection, and a deadline recovery index.

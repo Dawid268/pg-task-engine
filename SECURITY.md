@@ -3,7 +3,7 @@
 ## Supported scope
 
 `pg-task-engine` is a pre-release library. The current release candidate
-is `0.1.0a2`. API behavior, compatibility and security boundaries can
+is `0.1.0a3`. API behavior, compatibility and security boundaries can
 change until a stable release.
 
 The library executes **trusted, locally registered Python task handlers**.

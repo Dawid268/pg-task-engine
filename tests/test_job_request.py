@@ -283,6 +283,43 @@ def test_job_request_rejects_invalid_unicode_surrogate() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "invalid_payload",
+    [
+        {"message": "before\x00after"},
+        {"invalid\x00key": "value"},
+        {"nested": {"items": ["one", "\x00"]}},
+    ],
+    ids=["nul-in-string", "nul-in-object-key", "nul-in-nested-list"],
+)
+def test_job_request_rejects_postgresql_incompatible_nul(
+    invalid_payload: JSONPayload,
+) -> None:
+    with pytest.raises(ValueError, match="payload"):
+        JobRequest(
+            task=TaskRef("send_email", 1),
+            queue=AppQueue.EMAILS,
+            payload=invalid_payload,
+        )
+
+
+def test_job_request_rejects_nul_in_idempotency_key() -> None:
+    with pytest.raises(ValueError, match="idempotency_key"):
+        JobRequest(
+            task=TaskRef("send_email", 1),
+            queue=AppQueue.EMAILS,
+            idempotency_key="request\x00id",
+        )
+
+
+def test_job_request_rejects_invalid_queue_value() -> None:
+    class BadQueue(StrEnum):
+        INVALID = "emails\x00bad"
+
+    with pytest.raises(ValueError, match="queue"):
+        JobRequest(task=TaskRef("send_email", 1), queue=BadQueue.INVALID)
+
+
 def test_job_request_accepts_json_scalars_and_unicode() -> None:
     payload: JSONPayload = {
         "text": "Zażółć gęślą jaźń 🐢",

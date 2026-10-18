@@ -13,6 +13,8 @@ class TaskRef:
             raise TypeError("TaskRef name must be a string.")
         if not self.name.strip():
             raise ValueError("TaskRef name must not be blank.")
+        if "\x00" in self.name:
+            raise ValueError("TaskRef name must not contain NUL characters.")
         if type(self.version) is not int:
             raise TypeError("TaskRef version must be an integer.")
         if self.version <= 0:
