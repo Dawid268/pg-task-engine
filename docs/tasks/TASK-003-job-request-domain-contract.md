@@ -2,7 +2,7 @@
 
 **Typ:** Story / Backend · Python 3.13
 **Priorytet:** High
-**Status:** To Do
+**Status:** Done — kontrakty, walidacja, testy i dokumentacja
 **Assignee:** Dawid268
 **Gałąź robocza:** `dawid268/feat/job-request-contract`
 **Gałąź docelowa:** `dev`
@@ -129,14 +129,14 @@ Nazwy pomocniczych typów i modułów mogą zostać doprecyzowane w kodzie.
 
 ## Definition of Done
 
-- [ ] `JobRequest` z typowanymi polami i poprawną kontrolą typu kolejki.
-- [ ] JSON payload walidowany rekurencyjnie, kopiowany i limitowany do 64 KiB.
-- [ ] `not_before` i `idempotency_key` spełniają powyższe ograniczenia.
-- [ ] Podstawowy `ExecutionPolicy` ma testowane niezmienniki.
-- [ ] Testy obejmują wszystkie wymienione przypadki brzegowe i wyjątki.
-- [ ] README wyjaśnia model, a biblioteka nie zależy od FastAPI/Pydantic.
-- [ ] Cały test suite, Ruff, formatowanie, mypy strict i `uv build` przechodzą.
-- [ ] Po review: commit, push, merge **feature → dev**, aktualizacja Issue.
+- [x] `JobRequest` z typowanymi polami i poprawną kontrolą typu kolejki.
+- [x] JSON payload walidowany rekurencyjnie, kopiowany i limitowany do 64 KiB.
+- [x] `not_before` i `idempotency_key` spełniają powyższe ograniczenia.
+- [x] Podstawowy `ExecutionPolicy` ma testowane niezmienniki.
+- [x] Testy obejmują wszystkie wymienione przypadki brzegowe i wyjątki.
+- [x] README wyjaśnia model, a biblioteka nie zależy od FastAPI/Pydantic.
+- [x] Cały test suite, Ruff, formatowanie, mypy strict i `uv build` przechodzą.
+- [x] Po review: commit, push, merge **feature → dev**, aktualizacja Issue.
 
 ## Poza zakresem
 

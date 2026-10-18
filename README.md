@@ -82,6 +82,54 @@ arguments, **including raw strings** even though `StrEnum` compares equal
 to strings with the same value. Durable transition enforcement belongs to
 the future database-backed engine.
 
+## JobRequest and execution policy
+
+`JobRequest[QueueT]` (`pg_task_engine.job_request`) describes intent to enqueue
+a task. The application supplies a `StrEnum` for queue names; ordinary strings
+and `JobStatus` members are rejected. Future engine configuration must verify
+that the queue member belongs to the application's registered queue enum.
+
+```python
+from datetime import timedelta
+from enum import StrEnum
+
+from pg_task_engine.job_request import ExecutionPolicy, JobRequest
+from pg_task_engine.task_ref import TaskRef
+
+
+class AppQueue(StrEnum):
+    EMAILS = "emails"
+
+
+request: JobRequest[AppQueue] = JobRequest(
+    task=TaskRef("send_email", 1),
+    queue=AppQueue.EMAILS,
+    payload={"recipient_id": 42, "tags": ["welcome"]},
+    execution_policy=ExecutionPolicy(
+        max_attempts=3,
+        timeout=timedelta(seconds=30),
+        retry_delay=timedelta(seconds=5),
+    ),
+    idempotency_key="welcome-email:42",
+)
+```
+
+`JobRequest` validates task and policy types, UTC-aware `not_before`,
+nonblank idempotency keys up to 128 characters, and a strict JSON **object**
+payload. The latter accepts nested dictionaries with string keys, lists,
+strings, booleans, integers, finite floats and `None`; it rejects unsupported
+objects, cycles, invalid Unicode and non-finite numbers. Serialization for the
+64 KiB limit uses UTF-8 with sorted keys, no optional whitespace and literal
+non-ASCII characters (`sort_keys=True`, `separators=(",", ":")`,
+`ensure_ascii=False`). A JSON round-trip copies the input, including nested
+objects. The stored `payload` remains a mutable dictionary; `frozen=True`
+does not freeze nested containers. Treat it as a snapshot before enqueue.
+
+`ExecutionPolicy` accepts optional overrides for `max_attempts >= 1`,
+positive `timedelta` timeout and positive `timedelta` retry delay.
+Unspecified values are resolved by the engine when enqueuing. Neither
+`JobRequest` nor `ExecutionPolicy` accesses PostgreSQL or executes tasks.
+
 ## Local setup
 
 Python 3.13 is the development baseline; uv selects it without changing system Python.
