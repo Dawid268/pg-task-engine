@@ -1,16 +1,23 @@
 [project]
 name = "pg-task-engine"
-version = "0.0.1"
-description = "A PostgreSQL-backed durable task queue for Python (foundation stage)."
+version = "0.1.0a1"
+description = "A typed PostgreSQL-backed durable task queue for Python."
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+license = "MIT"
+dependencies = [
+    "psycopg-pool>=3.2,<4",
+    "psycopg[binary]>=3.2,<4",
+]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
+
+[project.scripts]
+pg-task-engine = "pg_task_engine.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11"]
@@ -62,6 +69,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR2004", "ARG001"]
+"src/pg_task_engine/engine.py" = ["PLR0913", "PLR0917"]  # Explicit transactional APIs.
 
 [tool.mypy]
 python_version = "3.13"
@@ -78,6 +86,7 @@ warn_required_dynamic_aliases = true
 [tool.pytest.ini_options]
 minversion = "8.3"
 testpaths = ["tests"]
+markers = ["postgres: requires a dedicated PostgreSQL database ending in _test"]
 # Only the repository-only reference app needs this. The wheel is tested separately.
 pythonpath = ["."]
 addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]

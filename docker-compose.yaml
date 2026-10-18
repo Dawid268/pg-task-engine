@@ -26,13 +26,14 @@ services:
       retries: 3
       start_period: 10s
 
-  # Optional local database only; the reference API does not use it yet.
+  # Explicit local database for library development and manual migrations.
   db:
     profiles: [database]
-    image: postgres:17-bookworm
+    image: postgres:16-alpine
     environment:
       POSTGRES_DB: pg_task_engine
-      POSTGRES_USER: pg_task_engine
+      # PostgreSQL reserves usernames beginning with "pg_".
+      POSTGRES_USER: task_engine
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-}"
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-15439}:5432"
@@ -41,7 +42,7 @@ services:
     cpus: 1.0
     mem_limit: 512m
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U pg_task_engine -d pg_task_engine"]
+      test: [CMD-SHELL, "pg_isready -U task_engine -d pg_task_engine"]
       interval: 10s
       timeout: 3s
       retries: 5

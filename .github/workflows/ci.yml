@@ -1,0 +1,65 @@
+name: Python library CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: task_engine
+          POSTGRES_PASSWORD: isolated_ci_password
+          POSTGRES_DB: pg_task_engine_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U task_engine -d pg_task_engine_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      PG_TASK_ENGINE_TEST_DSN: postgresql://task_engine:isolated_ci_password@127.0.0.1:5432/pg_task_engine_test
+      TASK_ENGINE_DSN: postgresql://task_engine:isolated_ci_password@127.0.0.1:5432/pg_task_engine_test
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python and uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Static checks
+        run: |
+          uv run --locked ruff check .
+          uv run --locked ruff format --check .
+          uv run --locked mypy src app tests examples run.py
+
+      - name: Unit and real PostgreSQL integration tests
+        run: uv run --locked pytest -q
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Verify bundled SQL migration
+        run: |
+          uv run --locked python - <<'PY'
+          import pathlib
+          import zipfile
+
+          wheel = next(pathlib.Path("dist").glob("pg_task_engine-*.whl"))
+          with zipfile.ZipFile(wheel) as package:
+              assert "pg_task_engine/migrations/001_initial.sql" in package.namelist()
+          PY

@@ -1,10 +1,14 @@
 # pg-task-engine
 
-A PostgreSQL-backed durable task queue for Python — a learning and open-source portfolio project.
+A PostgreSQL-backed durable task queue for Python 3.13, with a typed SDK,
+real SQL migrations, cooperative workers and an optional reference FastAPI app.
 
-**Status: library packaging, a reference API scaffold, and early domain models
-(`TaskRef`, `JobStatus`, `JobProgress`). Durable task queues, workers, database
-integration, job migrations and GCP deployment are not implemented.**
+**Status: local alpha implementation.** The core enqueue/claim/execute/result
+flow works with PostgreSQL 16+, including idempotency, leases, retries,
+timeouts, progress, events and cooperative cancellation. It is **not** a
+guarantee of exactly-once execution, a hardened multi-tenant service or a
+production deployment. Neither PyPI publication nor GCP deployment has
+been performed.
 
 ## Boilerplate source
 
@@ -16,11 +20,13 @@ See `docs/learning/02-touchpoint-boilerplate.md` for the mapping and deliberate 
 
 Project repository: https://github.com/Dawid268/pg-task-engine
 
-`pg-task-engine` remains a working package name. No PyPI release or registry reservation has been made. An open-source license has not yet been selected.
+`pg-task-engine` remains a working package name. No PyPI release or registry reservation has been made.
 
 ## Two separate concerns
 
-- `src/pg_task_engine/` is the installable library. Its foundation currently has no runtime dependencies. Importing it does not start an API, connect to a database or configure logging.
+- `src/pg_task_engine/` is the installable library, depending on `psycopg`
+  and `psycopg_pool`. Importing it does not start an API, connect to a
+  database or apply migrations.
 - `app/` is a repository-only reference FastAPI application, using the source boilerplate's layout. It is not shipped inside the library wheel.
 
 The `api` dependency group contains reference-application dependencies. The `dev` group includes `api` plus testing and quality tools. These groups are not published as library runtime requirements.
@@ -47,8 +53,10 @@ The `frozen=True, slots=True` dataclass provides value-based equality and hashin
 An individual snapshot only validates that `revision >= 0`; it **cannot** decide
 whether a write is newer than the state currently stored in PostgreSQL. Future
 storage operations must atomically compare revisions and verify the active job
-attempt/lease to prevent stale workers from overwriting progress. The persistence
-and retry mechanisms are not implemented yet.
+attempt/lease to prevent stale workers from overwriting progress. The
+PostgreSQL engine now persists progress through `save_progress` and rejects
+stale tokens or non-increasing revisions; this standalone model still does
+not persist itself.
 
 ## JobStatus lifecycle contract
 
@@ -80,13 +88,13 @@ retry policies or cancellation prerequisites. It returns `False` for forbidden
 edges between valid statuses and raises `TypeError` for non-`JobStatus`
 arguments, **including raw strings** even though `StrEnum` compares equal
 to strings with the same value. Durable transition enforcement belongs to
-the future database-backed engine.
+the database-backed engine and includes attempt/lease verification.
 
 ## JobRequest and execution policy
 
 `JobRequest[QueueT]` (`pg_task_engine.job_request`) describes intent to enqueue
 a task. The application supplies a `StrEnum` for queue names; ordinary strings
-and `JobStatus` members are rejected. Future engine configuration must verify
+and `JobStatus` members are rejected. `TaskEngine` additionally verifies
 that the queue member belongs to the application's registered queue enum.
 
 ```python
@@ -127,8 +135,55 @@ does not freeze nested containers. Treat it as a snapshot before enqueue.
 
 `ExecutionPolicy` accepts optional overrides for `max_attempts >= 1`,
 positive `timedelta` timeout and positive `timedelta` retry delay.
-Unspecified values are resolved by the engine when enqueuing. Neither
+Unspecified values are resolved by `EngineDefaults` during enqueue. Neither
 `JobRequest` nor `ExecutionPolicy` accesses PostgreSQL or executes tasks.
+
+## Quickstart: persisted task execution
+
+The repository contains `examples/quickstart.py`, including a trusted engine
+factory and a registered `send_email` handler (it does **not** send real email).
+Supply your own local password through an ignored `.env` file; never commit
+a live database DSN or other credentials.
+
+```bash
+docker compose --profile database up -d db
+export TASK_ENGINE_DSN='postgresql://task_engine:YOUR_LOCAL_PASSWORD@127.0.0.1:15439/pg_task_engine'
+uv sync --locked
+uv run --locked pg-task-engine migrate
+uv run --locked python -m examples.quickstart
+```
+
+Alternatively, use the CLI to start a worker, enqueue a task and inspect its
+UUID. Separate worker and enqueue processes must use the same trusted
+`module:factory` configuration and PostgreSQL database.
+
+```bash
+uv run --locked pg-task-engine worker --app examples.quickstart:build_engine --app-path . --queue emails
+uv run --locked pg-task-engine enqueue --app examples.quickstart:build_engine --app-path . --task send_email --version 1 --payload '{"recipient":"demo@example.test"}'
+uv run --locked pg-task-engine inspect --app examples.quickstart:build_engine --app-path . --job-id JOB_UUID
+```
+
+`--app` names trusted Python code selected by the operator, and
+`--app-path` explicitly adds its source root when that app is not installed
+into the Python environment. Job payloads
+cannot choose modules, Python callables or arbitrary HTTP URLs. The engine
+stores its tables in the PostgreSQL schema `task_engine`. Database DDL runs
+**only** when `migrate()` or the CLI migration command is invoked.
+
+`enqueue` guarantees idempotency within one database installation when the
+optional key matches the normalized intent, and rejects conflicting reuse.
+`claim` uses `FOR UPDATE SKIP LOCKED` to assign an attempt and lease. Worker
+callbacks run **outside** database transactions, with automatic heartbeat
+and attempt fencing on completion. Their input and output can have optional
+version-specific validators registered with `TaskRef`.
+
+Default policy: 3 attempts, 5-minute execution deadline, 5-second retry
+delay, 30-second lease. Customize it with `EngineDefaults` and
+`ExecutionPolicy`. Jobs are **at-least-once**, not exactly-once:
+external effects must use their own idempotency/fencing. Cancellation is
+cooperative; the engine cannot forcibly stop arbitrary application code.
+See [operations and safety](docs/OPERATIONS.md) for recovery and deployment
+assumptions.
 
 ## Local setup
 
@@ -139,7 +194,7 @@ uv sync --locked
 uv run --locked pytest
 uv run --locked ruff check .
 uv run --locked ruff format --check .
-uv run --locked mypy src app tests run.py
+uv run --locked mypy src app tests examples run.py
 uv build
 ```
 
@@ -168,13 +223,16 @@ docker compose up --build api
 
 The API runs as a non-root user, respects `PORT`, and is published on loopback only in local Compose. The image build uses the lockfile and the `api` dependency group; it does not install development tools.
 
-The optional `database` profile defines an isolated PostgreSQL development service. It is **not used by the API yet**. Set your own nonempty `POSTGRES_PASSWORD` in an ignored local `.env` before explicitly starting it:
+The optional `database` profile defines an isolated PostgreSQL development service. The reference API itself still only exposes health/version routes; library clients and workers can use that PostgreSQL instance. Set your own nonempty `POSTGRES_PASSWORD` in an ignored local `.env` before explicitly starting it:
 
 ```bash
 docker compose --profile database up -d db
 ```
 
-Without a password, first initialization of this database should fail rather than enable passwordless access. No source-project database, tables, migrations or test data are reused. Default host port: `15439`.
+Without a password, first initialization should fail rather than enable
+passwordless access. The database role is `task_engine`; PostgreSQL reserves
+user and schema names beginning with `pg_`. No other projects' databases
+are reused. Default host port: `15439`.
 
 ## Quality hooks
 
@@ -196,12 +254,14 @@ Repository instructions are in `AGENTS.md`.
 ## Learning milestones
 
 1. Packaging and adapted API boilerplate (completed).
-2. A small typed job model, validation and state transitions (in progress; initial domain types implemented).
-3. Explicit PostgreSQL migrations and one enqueue/execute/result flow.
-4. Concurrent workers, leases, retries, logs and failure tests.
-5. A real public library API, reference application and GCP deployment.
+2. Typed request, progress and lifecycle models (completed).
+3. Explicit PostgreSQL migrations and enqueue/execute/result (local alpha).
+4. Concurrent claims, leases, retries, progress, events and failure tests (local alpha).
+5. Production hardening, multi-process load testing, optional gateway and GCP deployment (not done).
 
-PostgreSQL drivers, SQLAlchemy and Alembic will be introduced with the first actual database use case. Empty database abstractions and dummy queue endpoints are not added in advance.
+The core uses `psycopg`, connection pooling and explicit SQL migration files.
+SQLAlchemy and Alembic are not required. The reference FastAPI app remains a
+separate application and is not included in the installable wheel.
 
 Learning notes are in `docs/learning/`. Older foundation records in `docs/superpowers/` describe the initial packaging-only stage, not the current reference API.
 
