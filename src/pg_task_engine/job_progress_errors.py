@@ -18,6 +18,9 @@ class JobProgressErrorCode(StrEnum):
     REVISION_NEGATIVE = "revision_negative"
     UNIT_TYPE_ERROR = "unit_type_error"
     UNIT_EMPTY = "unit_empty"
+    UPDATED_AT_TYPE_ERROR = "updated_at_type_error"
+    UPDATED_AT_NAIVE = "updated_at_naive"
+    UPDATED_AT_NOT_UTC = "updated_at_not_utc"
 
 
 _MESSAGES: Final[dict[JobProgressErrorCode, str]] = {
@@ -30,6 +33,9 @@ _MESSAGES: Final[dict[JobProgressErrorCode, str]] = {
     JobProgressErrorCode.REVISION_NEGATIVE: "revision must be a non-negative integer",
     JobProgressErrorCode.UNIT_TYPE_ERROR: "unit must be a string",
     JobProgressErrorCode.UNIT_EMPTY: "unit must not be empty",
+    JobProgressErrorCode.UPDATED_AT_TYPE_ERROR: "updated_at must be a datetime",
+    JobProgressErrorCode.UPDATED_AT_NAIVE: "updated_at must be timezone-aware",
+    JobProgressErrorCode.UPDATED_AT_NOT_UTC: "updated_at must be in UTC",
 }
 
 
