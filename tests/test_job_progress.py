@@ -30,6 +30,18 @@ def test_job_progress_stores_values() -> None:
     assert progress.updated_at == timestamp
 
 
+def test_job_progress_rejects_postgresql_incompatible_unit() -> None:
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=1,
+            total=2,
+            unit="files\x00invalid",
+            revision=1,
+            updated_at=datetime(2026, 10, 18, tzinfo=UTC),
+        )
+    assert error.value.code is JobProgressErrorCode.UNIT_CONTAINS_NUL
+
+
 @pytest.mark.parametrize(
     "non_integer_completed",
     [1.5, "two", None, True],

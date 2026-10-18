@@ -23,6 +23,11 @@ def test_task_ref_rejects_blank_name(invalid_name: str) -> None:
         TaskRef(name=invalid_name, version=1)
 
 
+def test_task_ref_rejects_postgresql_incompatible_null_character() -> None:
+    with pytest.raises(ValueError, match="name"):
+        TaskRef(name="generate\x00_pdf", version=1)
+
+
 @pytest.mark.parametrize("invalid_version", [0, -1], ids=["zero", "negative"])
 def test_task_ref_rejects_non_positive_version(invalid_version: int) -> None:
     with pytest.raises(ValueError, match="version"):

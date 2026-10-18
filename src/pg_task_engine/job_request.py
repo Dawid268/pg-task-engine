@@ -18,7 +18,11 @@ _MAX_IDEMPOTENCY_KEY_LENGTH = 128
 
 
 def _validate_json_value(value: object, active: set[int]) -> None:
-    if value is None or type(value) in (bool, int, str):
+    if value is None or type(value) in (bool, int):
+        return
+    if type(value) is str:
+        if "\x00" in value:
+            raise ValueError("payload string must not contain a PostgreSQL-incompatible NUL")
         return
     if type(value) is float:
         if not isfinite(value):
@@ -42,6 +46,8 @@ def _validate_json_mapping(value: Mapping[object, object], active: set[int]) -> 
         for key, nested in value.items():
             if type(key) is not str:
                 raise TypeError("payload object keys must be strings")
+            if "\x00" in key:
+                raise ValueError("payload object keys must not contain NUL characters")
             _validate_json_value(nested, active)
     finally:
         active.remove(identity)
@@ -116,6 +122,8 @@ class JobRequest[QueueT: StrEnum]:
     def _validate_queue(self) -> None:
         if not isinstance(self.queue, StrEnum) or isinstance(self.queue, JobStatus):
             raise TypeError("queue must be an application-defined StrEnum")
+        if not self.queue.value.strip() or "\x00" in self.queue.value:
+            raise ValueError("queue value must be nonblank and contain no NUL characters")
 
     def _validate_not_before(self) -> None:
         if self.not_before is None:
@@ -137,6 +145,8 @@ class JobRequest[QueueT: StrEnum]:
             return
         if type(self.idempotency_key) is not str:
             raise TypeError("idempotency_key must be a string or None")
+        if "\x00" in self.idempotency_key:
+            raise ValueError("idempotency_key must not contain NUL characters")
         if not self.idempotency_key.strip():
             raise ValueError("idempotency_key must not be blank")
         if len(self.idempotency_key) > _MAX_IDEMPOTENCY_KEY_LENGTH:

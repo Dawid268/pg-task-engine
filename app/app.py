@@ -34,11 +34,13 @@ def app_factory() -> FastAPI:
     settings = get_settings()
     application = FastAPI(
         title=settings.APP_NAME,
-        description="Reference API scaffold. Task execution is not implemented yet.",
+        description="Reference health API. Queue execution is provided by the separate library.",
         version=__version__,
         debug=settings.DEBUG,
-        root_path=settings.APP_ROOT_PATH,
     )
+    # FastAPI 0.146+ deprecates the constructor's root_path argument.
+    # Preserve the configured ASGI root without depending on that deprecated API.
+    application.root_path = settings.APP_ROOT_PATH
     setup_routing(application)
     setup_middlewares(application, settings)
     return application
