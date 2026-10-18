@@ -6,6 +6,7 @@ is deliberately performed outside transactions by :mod:`pg_task_engine.worker`.
 
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -67,6 +68,33 @@ class InvalidTransitionError(TaskEngineError):
 
 class StaleAttemptError(TaskEngineError):
     """The worker's attempt/lease no longer authorizes writes."""
+
+
+class MigrationError(TaskEngineError):
+    """Applied migrations are missing, modified, or newer than this installation."""
+
+
+def _bundled_migrations() -> list[tuple[int, str, str]]:
+    """Read strictly numbered SQL assets in upgrade order.
+
+    The hash is computed from the original bytes and records the exact
+    migration published with this library version.
+    """
+    assets: list[tuple[int, str, str]] = []
+    directory = files("pg_task_engine").joinpath("migrations")
+    for asset in directory.iterdir():
+        if not asset.is_file() or not asset.name.endswith(".sql"):
+            continue
+        match = re.fullmatch(r"(\d{3,})_[a-z][a-z0-9_]*\.sql", asset.name)
+        if match is None:
+            raise MigrationError(f"Invalid numbered migration filename: {asset.name}")
+        version = int(match.group(1))
+        content = asset.read_bytes()
+        assets.append((version, hashlib.sha256(content).hexdigest(), content.decode("utf-8")))
+    assets.sort(key=lambda item: item[0])
+    if not assets or [version for version, _, _ in assets] != list(range(1, len(assets) + 1)):
+        raise MigrationError("Bundled SQL migrations must have consecutive versions from 001")
+    return assets
 
 
 def _row_required(row: Row | None, identifier: UUID) -> Row:
@@ -146,30 +174,61 @@ class TaskEngine[QueueT: StrEnum]:
         self._pool.close()
 
     def migrate(self) -> None:
-        """Apply bundled, explicitly versioned SQL migrations once per database.
+        """Apply every pending numbered SQL migration in a locked transaction.
 
-        A transaction-level advisory lock serializes simultaneous initializers.
-        No DDL runs on import or automatically when connecting.
+        Verify SHA-256 of previously applied assets and reject databases with
+        missing or unknown revisions. Upgrades from the legacy 001-only
+        metadata table populate its missing checksum once.
         """
+        migrations = _bundled_migrations()
+        known = {version: checksum for version, checksum, _ in migrations}
         with self._pool.connection() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(%s)", (6_010_013_001,))
             conn.execute("CREATE SCHEMA IF NOT EXISTS task_engine")
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS task_engine.schema_migrations ("
                 "version INTEGER PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL "
-                "DEFAULT clock_timestamp())"
+                "DEFAULT clock_timestamp(), checksum CHAR(64))"
             )
-            present = conn.execute(
-                "SELECT 1 FROM task_engine.schema_migrations WHERE version = 1"
-            ).fetchone()
-            if present is None:
-                migration = (
-                    files("pg_task_engine")
-                    .joinpath("migrations/001_initial.sql")
-                    .read_text(encoding="utf-8")
+            # Compatibility with installations using the original 001-only runner.
+            conn.execute(
+                "ALTER TABLE task_engine.schema_migrations "
+                "ADD COLUMN IF NOT EXISTS checksum CHAR(64)"
+            )
+            rows = conn.execute(
+                "SELECT version, checksum FROM task_engine.schema_migrations ORDER BY version"
+            ).fetchall()
+            installed = {int(row["version"]): row["checksum"] for row in rows}
+            if any(version not in known for version in installed):
+                raise MigrationError("Database has a newer or unknown migration version")
+            if sorted(installed) != list(range(1, len(installed) + 1)):
+                raise MigrationError("Database migration versions contain a gap")
+
+            for version, recorded in installed.items():
+                expected = known[version]
+                if recorded is None:
+                    # Version 001 predates checksummed metadata. Backfill only
+                    # during an upgrade from the original one-version layout.
+                    if version != 1 or len(installed) != 1:
+                        raise MigrationError(f"Missing checksum for migration {version:03d}")
+                    conn.execute(
+                        "UPDATE task_engine.schema_migrations SET checksum = %s WHERE version = %s",
+                        (expected, version),
+                    )
+                elif recorded != expected:
+                    raise MigrationError(f"SQL migration checksum mismatch for {version:03d}")
+
+            for version, checksum, sql in migrations:
+                if version in installed:
+                    continue
+                conn.execute(sql, prepare=False)
+                conn.execute(
+                    "INSERT INTO task_engine.schema_migrations(version, checksum) VALUES (%s, %s)",
+                    (version, checksum),
                 )
-                conn.execute(migration, prepare=False)
-                conn.execute("INSERT INTO task_engine.schema_migrations(version) VALUES (1)")
+            conn.execute(
+                "ALTER TABLE task_engine.schema_migrations ALTER COLUMN checksum SET NOT NULL"
+            )
 
     def register(
         self,

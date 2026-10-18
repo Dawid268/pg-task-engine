@@ -9,6 +9,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
     services:
       postgres:
         image: postgres:16-alpine
@@ -35,7 +39,7 @@ jobs:
       - name: Set up Python and uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
 
       - name: Install locked dependencies
@@ -53,13 +57,59 @@ jobs:
       - name: Build wheel and source distribution
         run: uv build
 
+      - name: Check distribution metadata for PyPI
+        run: uvx --from twine==7.0.0 twine check dist/*
+
       - name: Verify bundled SQL migration
         run: |
           uv run --locked python - <<'PY'
           import pathlib
+          import tarfile
           import zipfile
 
           wheel = next(pathlib.Path("dist").glob("pg_task_engine-*.whl"))
           with zipfile.ZipFile(wheel) as package:
               assert "pg_task_engine/migrations/001_initial.sql" in package.namelist()
+              assert "pg_task_engine/migrations/002_deadline_recovery_index.sql" in package.namelist()
+              assert any(name.endswith("/licenses/LICENSE") for name in package.namelist())
+          sdist = next(pathlib.Path("dist").glob("pg_task_engine-*.tar.gz"))
+          with tarfile.open(sdist, "r:gz") as package:
+              assert any(name.endswith("/LICENSE") for name in package.getnames())
           PY
+
+      - name: Verify isolated wheel installation
+        run: |
+          uv venv /tmp/pg-task-wheel --python ${{ matrix.python-version }}
+          uv pip install --python /tmp/pg-task-wheel/bin/python dist/*.whl
+          cd /tmp
+          /tmp/pg-task-wheel/bin/python - <<'PY'
+          from importlib.metadata import version
+          from importlib.resources import files
+          import pg_task_engine
+
+          assert version("pg-task-engine") == pg_task_engine.__version__
+          assert files("pg_task_engine").joinpath(
+              "migrations", "002_deadline_recovery_index.sql"
+          ).is_file()
+          print("Independent wheel installation OK")
+          PY
+
+  reference-api-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Build isolated API container
+        run: docker build --file Dockerfile --tag pg-task-engine-api:ci .
+
+      - name: Verify installed library in non-root container
+        run: |
+          docker run --rm --network none pg-task-engine-api:ci python -c '
+          from importlib.metadata import version
+          import pg_task_engine
+          assert pg_task_engine.__version__ == version("pg-task-engine")
+          print("Container library import OK")
+          '

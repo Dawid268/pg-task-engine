@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.0a2 (release-hardening candidate; not yet published)
+
+- Forward-only, checksummed migrations with 001 legacy metadata upgrade,
+  unknown-future-version detection, and a deadline recovery index.
+- Independent-process PostgreSQL contention test.
+- Complete distribution metadata and a deliberate, operator-approved PyPI
+  release workflow with trusted publishing.
+- Wheel installation verification in isolated environments.
+
 ## 0.1.0a1 (local alpha; not published)
 
 - Typed and validated `TaskRef`, `JobStatus`, `JobRequest`,

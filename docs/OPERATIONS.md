@@ -23,13 +23,23 @@ uv run --locked pg-task-engine migrate
 ```
 
 `migrate()` holds a PostgreSQL transaction-level advisory lock and applies
-only previously unapplied bundled SQL migrations. The first migration
+only previously unapplied, consecutively numbered bundled SQL migrations.
+Each applied revision records the SHA-256 of the exact migration file.
+If a recorded checksum differs, a migration version is missing, or the database
+contains a newer/unknown revision, the engine raises `MigrationError` rather
+than silently running against the wrong schema. Existing installations with
+the original `001`-only metadata table are upgraded once by recording the
+`001` checksum before applying `002`. Checksums do not retroactively prove
+which SQL produced a legacy unchecksummed installation.
+
+The first migration
 creates `task_engine.jobs`, `task_engine.attempts`,
 `task_engine.events`, `task_engine.progress` and the
-`task_engine.schema_migrations` version table. Never change historical
+`task_engine.schema_migrations` version table; `002` adds an index used for
+deadline recovery. DDL is transactional and may require strong schema locks;
+plan a maintenance window when migrating large live databases. Never change historical
 migration files after publishing a version; introduce a new numbered file
-and migration runner support instead. No destructive or automatic drop
-function is exposed.
+instead. No destructive or automatic drop function is exposed.
 
 The application database user must have permissions to create schema and
 tables during initial migration. Production installations should separate
@@ -127,8 +137,14 @@ uv build
 ```
 
 GitHub Actions starts its own dedicated PostgreSQL service to execute the
-same tests. This checks current code but does not replace load testing,
+same tests. The integration suite also includes atomic claim checks performed
+by independent Python processes with separate pools. The packaging pipeline
+installs the built wheel outside the source checkout. This checks current code
+but does not replace sustained load testing,
 cross-process failure injection, security review or production readiness.
+
+See [release process](RELEASING.md) for the manual, tag-verified PyPI/TestPyPI
+workflows and the independent operator approvals they require.
 
 ## Security boundaries
 

@@ -3,6 +3,7 @@
 from importlib import import_module
 from importlib.metadata import requires, version
 from importlib.resources import files
+from pathlib import Path
 
 import pg_task_engine
 
@@ -15,6 +16,7 @@ def test_package_exports_public_sdk() -> None:
         "JobProgress",
         "JobRequest",
         "JobStatus",
+        "MigrationError",
         "TaskEngine",
         "TaskRef",
         "Worker",
@@ -24,6 +26,11 @@ def test_package_exports_public_sdk() -> None:
 
 def test_wheel_migration_is_packaged() -> None:
     assert files("pg_task_engine").joinpath("migrations/001_initial.sql").is_file()
+    assert files("pg_task_engine").joinpath("migrations/002_deadline_recovery_index.sql").is_file()
+
+
+def test_license_exists_in_project_source() -> None:
+    assert (Path(__file__).resolve().parents[1] / "LICENSE").is_file()
 
 
 def test_public_version_matches_installed_distribution() -> None:

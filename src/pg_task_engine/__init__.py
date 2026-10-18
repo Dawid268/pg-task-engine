@@ -20,6 +20,7 @@ from pg_task_engine.engine import (
     IdempotencyConflictError,
     InvalidTransitionError,
     JobNotFoundError,
+    MigrationError,
     StaleAttemptError,
     TaskEngine,
     TaskEngineError,
@@ -37,7 +38,7 @@ from pg_task_engine.job_status import JobStatus, can_transition
 from pg_task_engine.task_ref import TaskRef
 from pg_task_engine.worker import TaskContext, Worker
 
-__version__: Final[str] = "0.1.0a1"
+__version__: Final[str] = "0.1.0a2"
 
 __all__ = (
     "AttemptStatus",
@@ -58,6 +59,7 @@ __all__ = (
     "JobResult",
     "JobSnapshot",
     "JobStatus",
+    "MigrationError",
     "ResolvedPolicy",
     "StaleAttemptError",
     "TaskContext",
