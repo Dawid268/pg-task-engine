@@ -27,3 +27,7 @@ class JobProgress:
             raise JobProgressValueError(JobProgressErrorCode.TOTAL_NEGATIVE)
         if self.total is not None and self.completed > self.total:
             raise JobProgressValueError(JobProgressErrorCode.COMPLETED_EXCEEDS_TOTAL)
+        if type(self.revision) is not int:
+            raise JobProgressTypeError(JobProgressErrorCode.REVISION_NOT_INTEGER)
+        if self.revision < 0:
+            raise JobProgressValueError(JobProgressErrorCode.REVISION_NEGATIVE)

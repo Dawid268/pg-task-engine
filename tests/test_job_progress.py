@@ -119,6 +119,11 @@ def test_job_progress_accepts_unknown_total() -> None:
         (JobProgressErrorCode.COMPLETED_EXCEEDS_TOTAL, "completed_exceeds_total"),
         (JobProgressErrorCode.TOTAL_NOT_INTEGER, "total_not_integer"),
         (JobProgressErrorCode.TOTAL_NEGATIVE, "total_negative"),
+        (JobProgressErrorCode.REVISION_NEGATIVE, "revision_negative"),
+        (
+            JobProgressErrorCode.REVISION_NOT_INTEGER,
+            "revision_not_integer",
+        ),
     ],
 )
 def test_job_progress_error_codes_are_stable(
@@ -155,3 +160,38 @@ def test_job_progress_accepts_completed_when_total_is_unknown() -> None:
         updated_at=timestamp,
     )
     assert progress.completed == 101
+
+
+def test_job_progress_rejects_negative_revision() -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit="emails",
+            revision=-1,
+            updated_at=timestamp,
+        )
+    assert error.value.code is JobProgressErrorCode.REVISION_NEGATIVE
+
+
+@pytest.mark.parametrize(
+    "non_integer_revision",
+    [1.5, "two", None, True],
+    ids=["float", "string", "none", "boolean"],
+)
+def test_job_progress_rejects_non_integer_revision(non_integer_revision: object) -> None:
+    timestamp = datetime(2026, 10, 15, 10, 0, tzinfo=UTC)
+
+    with pytest.raises(JobProgressTypeError) as error:
+        JobProgress(
+            completed=0,
+            total=100,
+            unit="emails",
+            revision=cast("int", non_integer_revision),
+            updated_at=timestamp,
+        )
+    assert error.value.code is JobProgressErrorCode.REVISION_NOT_INTEGER
+    assert isinstance(error.value, TypeError)
+    assert str(error.value)
