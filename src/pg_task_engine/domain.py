@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum, unique
 from uuid import UUID
 
+from pg_task_engine._postgresql import INT32_MAX, MAX_DURATION
 from pg_task_engine.job_progress import JobProgress
 from pg_task_engine.job_request import JSONPayload, JSONValue
 from pg_task_engine.job_status import JobStatus
@@ -58,12 +59,16 @@ class EngineDefaults:
             raise TypeError("max_attempts must be an integer")
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be positive")
+        if self.max_attempts > INT32_MAX:
+            raise ValueError("max_attempts exceeds PostgreSQL INTEGER range")
         for name in ("timeout", "retry_delay", "lease_duration"):
             duration = getattr(self, name)
             if not isinstance(duration, timedelta):
                 raise TypeError(f"{name} must be a timedelta")
             if duration <= timedelta(0):
                 raise ValueError(f"{name} must be positive")
+            if duration > MAX_DURATION:
+                raise ValueError(f"{name} cannot exceed 36500 days")
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,6 +11,7 @@ from time import monotonic
 from typing import cast
 from uuid import UUID, uuid4
 
+from pg_task_engine._postgresql import MAX_DURATION
 from pg_task_engine.domain import ErrorCode
 from pg_task_engine.engine import StaleAttemptError, TaskEngine
 from pg_task_engine.job_progress import JobProgress
@@ -89,6 +90,8 @@ class Worker[QueueT: StrEnum]:
             raise TypeError("worker_id must be a UUID or None")
         if not isinstance(poll_interval, timedelta) or poll_interval <= timedelta(0):
             raise ValueError("poll_interval must be a positive timedelta")
+        if poll_interval > MAX_DURATION:
+            raise ValueError("poll_interval must not exceed 36500 days")
         self.engine = engine
         self.queue = queue
         self.worker_id = worker_id if worker_id is not None else uuid4()

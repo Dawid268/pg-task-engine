@@ -13,9 +13,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.13", "3.14"]
+        postgres-version: ["16", "18"]
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres-version }}-alpine
         env:
           POSTGRES_USER: task_engine
           POSTGRES_PASSWORD: isolated_ci_password

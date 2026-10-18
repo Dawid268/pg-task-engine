@@ -19,6 +19,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from pg_task_engine._postgresql import INT64_MAX, require_utf8
 from pg_task_engine.domain import (
     AttemptStatus,
     EngineDefaults,
@@ -747,8 +748,10 @@ class TaskEngine[QueueT: StrEnum]:
     ) -> JobSnapshot[QueueT]:
         """Accept the result only from the current, valid attempt token."""
         serialized = _json_bytes(result)
-        if duration_ms is not None and (type(duration_ms) is not int or duration_ms < 0):
-            raise ValueError("duration_ms must be a non-negative integer or None")
+        if duration_ms is not None and (
+            type(duration_ms) is not int or not 0 <= duration_ms <= INT64_MAX
+        ):
+            raise ValueError("duration_ms must fit non-negative PostgreSQL BIGINT or be None")
         safe_result = cast("JSONValue", json.loads(serialized))
         with self._pool.connection() as conn:
             row, now = self._active_attempt(conn, attempt_id, worker_id)
@@ -859,12 +862,17 @@ class TaskEngine[QueueT: StrEnum]:
             raise TypeError("message must be a string")
         if "\x00" in message:
             raise ValueError("message must not contain PostgreSQL-incompatible NUL characters")
+        require_utf8(message, field="message")
         if exception_type is not None and not isinstance(exception_type, str):
             raise TypeError("exception_type must be a string or None")
         if exception_type is not None and "\x00" in exception_type:
             raise ValueError("exception_type must not contain NUL characters")
-        if duration_ms is not None and (type(duration_ms) is not int or duration_ms < 0):
-            raise ValueError("duration_ms must be a non-negative integer or None")
+        if exception_type is not None:
+            require_utf8(exception_type, field="exception_type")
+        if duration_ms is not None and (
+            type(duration_ms) is not int or not 0 <= duration_ms <= INT64_MAX
+        ):
+            raise ValueError("duration_ms must fit non-negative PostgreSQL BIGINT or be None")
         with self._pool.connection() as conn:
             row, now = self._active_attempt(conn, attempt_id, worker_id)
             if row["status"] != AttemptStatus.RUNNING:
