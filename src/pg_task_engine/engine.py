@@ -7,7 +7,7 @@ is deliberately performed outside transactions by :mod:`pg_task_engine.worker`.
 import hashlib
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from importlib.resources import files
@@ -19,6 +19,7 @@ from psycopg.rows import DictRow, dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from pg_task_engine._postgresql import INT64_MAX, require_utf8
 from pg_task_engine.domain import (
     AttemptStatus,
     EngineDefaults,
@@ -265,6 +266,11 @@ class TaskEngine[QueueT: StrEnum]:
         except KeyError as error:
             raise UnknownTaskError(f"No worker handler for {task.name}:{task.version}") from error
 
+    @property
+    def runnable_tasks(self) -> frozenset[TaskRef]:
+        """Task versions this engine instance can actually execute."""
+        return frozenset(self._handlers)
+
     def validate_input(self, task: TaskRef, payload: JSONPayload) -> None:
         """Apply a version-specific input schema to an isolated JSON copy."""
         validator = self._input_validators.get(task)
@@ -272,10 +278,11 @@ class TaskEngine[QueueT: StrEnum]:
             validator(cast("JSONPayload", json.loads(_json_bytes(payload))))
 
     def validate_output(self, task: TaskRef, value: JSONValue) -> None:
-        """Apply a version-specific result schema to an isolated JSON copy."""
+        """Validate JSON even without an optional task-specific result schema."""
+        isolated = cast("JSONValue", json.loads(_json_bytes(value)))
         validator = self._output_validators.get(task)
         if validator is not None:
-            validator(cast("JSONValue", json.loads(_json_bytes(value))))
+            validator(isolated)
 
     def enqueue_task(
         self,
@@ -547,16 +554,31 @@ class TaskEngine[QueueT: StrEnum]:
                 for row in rows
             ]
 
-    def claim(self, queue: QueueT, *, worker_id: UUID) -> JobAttempt | None:
+    def claim(
+        self,
+        queue: QueueT,
+        *,
+        worker_id: UUID,
+        supported_tasks: Collection[TaskRef] | None = None,
+    ) -> JobAttempt | None:
         """Atomically lease the earliest ready Job using SKIP LOCKED.
 
         Only one transaction can claim a particular job. Attempts are counted
         *at claim*, even if the worker never starts executing its handler.
+        Workers can restrict claims to locally supported name/version pairs.
+        Manual or remote executors may omit the optional filter.
         """
         if type(queue) is not self.queue_enum:
             raise TypeError("queue must belong to the registered queue enum")
         if not isinstance(worker_id, UUID):
             raise TypeError("worker_id must be a UUID")
+        task_filter: tuple[TaskRef, ...] = ()
+        if supported_tasks is not None:
+            task_filter = tuple(supported_tasks)
+            if not all(isinstance(task, TaskRef) for task in task_filter):
+                raise TypeError("supported_tasks must contain only TaskRef instances")
+            if not task_filter:
+                return None
         with self._pool.connection() as conn:
             candidate = conn.execute(
                 """
@@ -566,11 +588,23 @@ class TaskEngine[QueueT: StrEnum]:
                   AND status IN ('queued', 'retry_scheduled')
                   AND available_at <= clock_timestamp()
                   AND attempts_count < max_attempts
+                  AND (
+                      %s::boolean
+                      OR (task_name, task_version) IN (
+                          SELECT accepted.name, accepted.version
+                          FROM unnest(%s::text[], %s::integer[]) AS accepted(name, version)
+                      )
+                  )
                 ORDER BY available_at, created_at, id
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
                 """,
-                (queue.value,),
+                (
+                    queue.value,
+                    supported_tasks is None,
+                    [task.name for task in task_filter],
+                    [task.version for task in task_filter],
+                ),
             ).fetchone()
             if candidate is None:
                 return None
@@ -714,8 +748,10 @@ class TaskEngine[QueueT: StrEnum]:
     ) -> JobSnapshot[QueueT]:
         """Accept the result only from the current, valid attempt token."""
         serialized = _json_bytes(result)
-        if duration_ms is not None and (type(duration_ms) is not int or duration_ms < 0):
-            raise ValueError("duration_ms must be a non-negative integer or None")
+        if duration_ms is not None and (
+            type(duration_ms) is not int or not 0 <= duration_ms <= INT64_MAX
+        ):
+            raise ValueError("duration_ms must fit non-negative PostgreSQL BIGINT or be None")
         safe_result = cast("JSONValue", json.loads(serialized))
         with self._pool.connection() as conn:
             row, now = self._active_attempt(conn, attempt_id, worker_id)
@@ -824,10 +860,19 @@ class TaskEngine[QueueT: StrEnum]:
         safe_code = ErrorCode(code)
         if not isinstance(message, str):
             raise TypeError("message must be a string")
+        if "\x00" in message:
+            raise ValueError("message must not contain PostgreSQL-incompatible NUL characters")
+        require_utf8(message, field="message")
         if exception_type is not None and not isinstance(exception_type, str):
             raise TypeError("exception_type must be a string or None")
-        if duration_ms is not None and (type(duration_ms) is not int or duration_ms < 0):
-            raise ValueError("duration_ms must be a non-negative integer or None")
+        if exception_type is not None and "\x00" in exception_type:
+            raise ValueError("exception_type must not contain NUL characters")
+        if exception_type is not None:
+            require_utf8(exception_type, field="exception_type")
+        if duration_ms is not None and (
+            type(duration_ms) is not int or not 0 <= duration_ms <= INT64_MAX
+        ):
+            raise ValueError("duration_ms must fit non-negative PostgreSQL BIGINT or be None")
         with self._pool.connection() as conn:
             row, now = self._active_attempt(conn, attempt_id, worker_id)
             if row["status"] != AttemptStatus.RUNNING:

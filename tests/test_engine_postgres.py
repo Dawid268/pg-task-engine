@@ -4,20 +4,23 @@ Run with PG_TASK_ENGINE_TEST_DSN set.  Nothing is deleted in an arbitrary DB.
 """
 
 import hashlib
+import json
 import os
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import timedelta
 from enum import StrEnum
 from importlib.resources import files
 from multiprocessing import get_context
+from threading import Event
 from typing import cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
 
-from pg_task_engine.domain import AttemptStatus, EngineDefaults
+from pg_task_engine.cli import main as cli_main
+from pg_task_engine.domain import AttemptStatus, EngineDefaults, ErrorCode
 from pg_task_engine.engine import (
     IdempotencyConflictError,
     InvalidTransitionError,
@@ -30,7 +33,7 @@ from pg_task_engine.job_progress import JobProgress
 from pg_task_engine.job_request import ExecutionPolicy, JobRequest, JSONPayload, JSONValue
 from pg_task_engine.job_status import JobStatus
 from pg_task_engine.task_ref import TaskRef
-from pg_task_engine.worker import Worker
+from pg_task_engine.worker import TaskContext, Worker
 
 pytestmark = pytest.mark.postgres
 
@@ -101,6 +104,23 @@ def _claim_from_separate_process(dsn: str) -> str | None:
         return str(claim.job_id) if claim is not None else None
 
 
+def _execute_task_version_in_separate_process(dsn: str, name: str, version: int) -> int:
+    """One independently registered worker on a shared queue."""
+    with TaskEngine(
+        dsn,
+        queue_enum=Queue,
+        default_queue=Queue.EMAILS,
+        pool_size=3,
+    ) as task_engine:
+        ref = TaskRef(name, version)
+        task_engine.register(ref, lambda _context, _payload: {"handled": name})
+        worker = Worker(task_engine, queue=Queue.EMAILS)
+        processed = 0
+        while worker.run_once():
+            processed += 1
+        return processed
+
+
 def test_migrations_record_checksums_for_all_bundled_versions(
     engine: TaskEngine[Queue],
 ) -> None:
@@ -129,6 +149,28 @@ def test_migrations_record_checksums_for_all_bundled_versions(
             "SELECT version, checksum FROM task_engine.schema_migrations ORDER BY version"
         ).fetchall()
     assert reread == rows
+
+
+def test_migrate_legacy_001_schema_preserves_existing_jobs(
+    engine: TaskEngine[Queue],
+) -> None:
+    job = engine.enqueue(_request(key="legacy:job"))
+    with psycopg.connect(engine.dsn) as conn:
+        conn.execute("DROP INDEX IF EXISTS task_engine.attempts_deadline_active_idx")
+        conn.execute("DELETE FROM task_engine.schema_migrations WHERE version = 2")
+        conn.execute("ALTER TABLE task_engine.schema_migrations DROP COLUMN checksum")
+
+    engine.migrate()
+    persisted = engine.get(job.id)
+    assert persisted.id == job.id
+    assert persisted.status is JobStatus.QUEUED
+    assert persisted.idempotency_key == "legacy:job"
+    with psycopg.connect(engine.dsn) as conn:
+        revisions = conn.execute(
+            "SELECT version, checksum FROM task_engine.schema_migrations ORDER BY version"
+        ).fetchall()
+    assert [revision[0] for revision in revisions] == [1, 2]
+    assert all(len(revision[1]) == 64 for revision in revisions)
 
 
 def test_migrate_rejects_changed_applied_sql(engine: TaskEngine[Queue]) -> None:
@@ -370,6 +412,23 @@ def test_claim_is_atomic_among_concurrent_workers(engine: TaskEngine[Queue]) -> 
     assert len(engine.attempts(job.id)) == 1
 
 
+def test_claim_filters_explicit_supported_task_set(engine: TaskEngine[Queue]) -> None:
+    waiting = engine.enqueue(_request())
+    assert engine.claim(Queue.EMAILS, worker_id=uuid4(), supported_tasks=[]) is None
+    assert engine.get(waiting.id).attempts_count == 0
+
+    with pytest.raises(TypeError, match="supported_tasks"):
+        engine.claim(
+            Queue.EMAILS,
+            worker_id=uuid4(),
+            supported_tasks=cast("Collection[TaskRef]", ["send_email"]),
+        )
+    assert engine.get(waiting.id).status is JobStatus.QUEUED
+    claimed = engine.claim(Queue.EMAILS, worker_id=uuid4(), supported_tasks=(SEND,))
+    assert claimed is not None
+    assert claimed.job_id == waiting.id
+
+
 def test_claims_are_atomic_across_independent_processes(engine: TaskEngine[Queue]) -> None:
     jobs = [engine.enqueue(_request()) for _ in range(8)]
     with ProcessPoolExecutor(max_workers=4, mp_context=get_context("spawn")) as pool:
@@ -379,6 +438,31 @@ def test_claims_are_atomic_across_independent_processes(engine: TaskEngine[Queue
     for job in jobs:
         assert engine.get(job.id).attempts_count == 1
         assert len(engine.attempts(job.id)) == 1
+
+
+def test_separate_process_workers_handle_only_their_own_task_versions(
+    engine: TaskEngine[Queue],
+) -> None:
+    jobs = [engine.enqueue(_request(task=SEND)) for _ in range(12)]
+    jobs += [engine.enqueue(_request(task=REPORT)) for _ in range(12)]
+
+    with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as pool:
+        futures = [
+            pool.submit(
+                _execute_task_version_in_separate_process, engine.dsn, SEND.name, SEND.version
+            ),
+            pool.submit(
+                _execute_task_version_in_separate_process, engine.dsn, REPORT.name, REPORT.version
+            ),
+        ]
+        assert [future.result() for future in futures] == [12, 12]
+
+    for job in jobs:
+        completed = engine.get(job.id)
+        assert completed.status is JobStatus.SUCCEEDED
+        assert completed.attempts_count == 1
+        assert completed.result is not None
+        assert completed.result.value == {"handled": job.task.name}
 
 
 def test_retry_and_exhaustion(engine: TaskEngine[Queue]) -> None:
@@ -661,6 +745,166 @@ def test_worker_retries_and_succeeds_after_transient_failure(engine: TaskEngine[
     assert counter == 2
 
 
+def test_worker_skips_tasks_without_a_locally_registered_handler(
+    engine: TaskEngine[Queue],
+) -> None:
+    """Two workers can register different task handlers for one shared queue."""
+    unsupported = engine.enqueue(_request(task=SEND))
+    supported = engine.enqueue(_request(task=REPORT))
+    engine.register(REPORT, lambda _context, _payload: {"handled_by": "report-worker"})
+
+    worker = Worker(engine, queue=Queue.EMAILS)
+    assert worker.run_once() is True
+    assert engine.get(supported.id).status is JobStatus.SUCCEEDED
+    assert engine.get(unsupported.id).status is JobStatus.QUEUED
+    assert engine.get(unsupported.id).attempts_count == 0
+    assert engine.attempts(unsupported.id) == []
+    assert worker.run_once() is False
+
+    engine.register(SEND, lambda _context, _payload: {"handled_by": "email-worker"})
+    assert worker.run_once() is True
+    assert engine.get(unsupported.id).status is JobStatus.SUCCEEDED
+    assert engine.get(unsupported.id).attempts_count == 1
+
+
+def test_worker_does_not_run_an_unregistered_task_version(
+    engine: TaskEngine[Queue],
+) -> None:
+    newer_task = TaskRef("send_email", 3)
+    engine.register(newer_task)
+    newer = engine.enqueue(_request(task=newer_task))
+    handled: list[str] = []
+
+    def older_version(_context: object, _payload: JSONPayload) -> JSONValue:
+        handled.append("old")
+        return {"version": 1}
+
+    engine.register(SEND, older_version)
+    worker = Worker(engine, queue=Queue.EMAILS)
+
+    assert worker.run_once() is False
+    assert handled == []
+    assert engine.get(newer.id).status is JobStatus.QUEUED
+    assert engine.attempts(newer.id) == []
+
+
+@pytest.mark.parametrize("exception_type", [ValueError, TypeError])
+def test_worker_retries_transient_user_handler_type_errors(
+    engine: TaskEngine[Queue], exception_type: type[Exception]
+) -> None:
+    job = engine.enqueue(_request())
+    calls = 0
+
+    def flaky(_context: object, _payload: JSONPayload) -> JSONValue:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise exception_type("temporary business error, not a schema failure")
+        return {"calls": calls}
+
+    engine.register(SEND, flaky)
+    worker = Worker(engine, queue=Queue.EMAILS)
+    assert worker.run_once()
+    assert engine.get(job.id).status is JobStatus.RETRY_SCHEDULED
+    first_error = engine.attempts(job.id)[0].error
+    assert first_error is not None
+    assert first_error.code is ErrorCode.EXECUTION_ERROR
+
+    with psycopg.connect(engine.dsn) as conn:
+        conn.execute(
+            "UPDATE task_engine.jobs SET available_at = clock_timestamp() - interval '1 second' "
+            "WHERE id = %s",
+            (job.id,),
+        )
+
+    assert worker.run_once()
+    assert engine.get(job.id).status is JobStatus.SUCCEEDED
+    assert calls == 2
+
+
+def test_worker_without_handlers_does_not_touch_waiting_job(engine: TaskEngine[Queue]) -> None:
+    job = engine.enqueue(_request())
+    worker = Worker(engine, queue=Queue.EMAILS)
+    assert worker.run_once() is False
+    assert engine.get(job.id).status is JobStatus.QUEUED
+    assert engine.attempts(job.id) == []
+
+
+def test_worker_rejects_poll_interval_outside_safe_range(engine: TaskEngine[Queue]) -> None:
+    with pytest.raises(ValueError, match="poll_interval"):
+        Worker(engine, queue=Queue.EMAILS, poll_interval=timedelta(days=999_999_999))
+
+
+def test_cli_can_enqueue_and_inspect_real_postgresql_job(
+    engine: TaskEngine[Queue],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("TASK_ENGINE_DSN", engine.dsn)
+    app = "examples.quickstart:build_engine"
+
+    assert (
+        cli_main(
+            [
+                "enqueue",
+                "--app",
+                app,
+                "--task",
+                SEND.name,
+                "--version",
+                "1",
+                "--payload",
+                '{"recipient":"cli-example@example.test"}',
+            ]
+        )
+        == 0
+    )
+    job_id = UUID(capsys.readouterr().out.strip())
+    assert engine.get(job_id).status is JobStatus.QUEUED
+
+    engine.register(SEND, lambda _context, _payload: {"sent": True})
+    assert Worker(engine, queue=Queue.EMAILS).run_once() is True
+    assert cli_main(["inspect", "--app", app, "--job-id", str(job_id)]) == 0
+    inspected = json.loads(capsys.readouterr().out)
+    assert inspected["status"] == "succeeded"
+    assert inspected["result"]["value"] == {"sent": True}
+    assert inspected["attempts_count"] == 1
+
+
+def test_cli_migration_command_is_idempotent(
+    engine: TaskEngine[Queue],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("TASK_ENGINE_DSN", engine.dsn)
+    assert cli_main(["migrate"]) == 0
+    assert cli_main(["migrate"]) == 0
+    assert capsys.readouterr().out.count("Database migrations applied") == 2
+
+
+def test_worker_run_forever_handles_task_until_stop_and_heartbeats(
+    engine: TaskEngine[Queue],
+) -> None:
+    stop = Event()
+    job = engine.enqueue(_request())
+
+    def handler(context: TaskContext[Queue], _payload: JSONPayload) -> JSONValue:
+        context.heartbeat()
+        context.save_progress(completed=1, total=1, unit="jobs", revision=1)
+        stop.set()
+        return {"processed": True}
+
+    engine.register(SEND, handler)
+    Worker(engine, queue=Queue.EMAILS, poll_interval=timedelta(milliseconds=1)).run_forever(
+        stop=stop
+    )
+    completed = engine.get(job.id)
+    assert completed.status is JobStatus.SUCCEEDED
+    assert completed.progress is not None
+    assert completed.progress.completed == 1
+    assert engine.attempts(job.id)[0].heartbeat_at is not None
+
+
 def test_invalid_result_fails_job_without_retry(engine: TaskEngine[Queue]) -> None:
     job = engine.enqueue(_request())
     engine.register(SEND, lambda _context, _payload: {1, 2, 3})
@@ -671,3 +915,81 @@ def test_invalid_result_fails_job_without_retry(engine: TaskEngine[Queue]) -> No
     error = engine.attempts(job.id)[0].error
     assert error is not None
     assert error.code.value == "validation_error"
+
+
+def test_postgresql_incompatible_result_is_rejected_before_db_write(
+    engine: TaskEngine[Queue],
+) -> None:
+    job = engine.enqueue(_request())
+    worker_id = uuid4()
+    attempt = engine.claim(Queue.EMAILS, worker_id=worker_id)
+    assert attempt is not None
+    engine.start(attempt.id, worker_id=worker_id)
+
+    with pytest.raises(ValueError, match="result"):
+        engine.succeed(attempt.id, worker_id=worker_id, result={"text": "bad\x00data"})
+
+    assert engine.get(job.id).status is JobStatus.RUNNING
+    assert engine.fail(attempt.id, worker_id=worker_id, retryable=False).status is JobStatus.FAILED
+
+
+def test_invalid_error_details_are_rejected_before_postgresql(
+    engine: TaskEngine[Queue],
+) -> None:
+    job = engine.enqueue(_request())
+    worker_id = uuid4()
+    attempt = engine.claim(Queue.EMAILS, worker_id=worker_id)
+    assert attempt is not None
+    engine.start(attempt.id, worker_id=worker_id)
+
+    with pytest.raises(ValueError, match="message"):
+        engine.fail(attempt.id, worker_id=worker_id, message="contains\x00nul")
+    with pytest.raises(ValueError, match="exception_type"):
+        engine.fail(attempt.id, worker_id=worker_id, exception_type="Invalid\x00Error")
+
+    assert engine.get(job.id).status is JobStatus.RUNNING
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("message", "contains" + chr(0xD800) + "bad"),
+        ("exception_type", "Error" + chr(0xD800) + "bad"),
+    ],
+)
+def test_invalid_unicode_error_details_rejected_before_postgresql(
+    engine: TaskEngine[Queue], field_name: str, value: str
+) -> None:
+    job = engine.enqueue(_request())
+    worker_id = uuid4()
+    attempt = engine.claim(Queue.EMAILS, worker_id=worker_id)
+    assert attempt is not None
+    engine.start(attempt.id, worker_id=worker_id)
+
+    with pytest.raises(ValueError, match=field_name):
+        engine.fail(
+            attempt.id,
+            worker_id=worker_id,
+            message=value if field_name == "message" else "Task execution failed",
+            exception_type=value if field_name == "exception_type" else None,
+        )
+    assert engine.get(job.id).status is JobStatus.RUNNING
+
+
+@pytest.mark.parametrize("operation", ["succeed", "fail"])
+def test_attempt_duration_outside_postgresql_bigint_is_rejected_before_write(
+    engine: TaskEngine[Queue], operation: str
+) -> None:
+    job = engine.enqueue(_request())
+    worker_id = uuid4()
+    attempt = engine.claim(Queue.EMAILS, worker_id=worker_id)
+    assert attempt is not None
+    engine.start(attempt.id, worker_id=worker_id)
+
+    if operation == "succeed":
+        with pytest.raises(ValueError, match="duration_ms"):
+            engine.succeed(attempt.id, worker_id=worker_id, result=None, duration_ms=2**63)
+    else:
+        with pytest.raises(ValueError, match="duration_ms"):
+            engine.fail(attempt.id, worker_id=worker_id, duration_ms=2**63)
+    assert engine.get(job.id).status is JobStatus.RUNNING

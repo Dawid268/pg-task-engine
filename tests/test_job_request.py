@@ -283,6 +283,60 @@ def test_job_request_rejects_invalid_unicode_surrogate() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "invalid_payload",
+    [
+        {"message": "before\x00after"},
+        {"invalid\x00key": "value"},
+        {"nested": {"items": ["one", "\x00"]}},
+    ],
+    ids=["nul-in-string", "nul-in-object-key", "nul-in-nested-list"],
+)
+def test_job_request_rejects_postgresql_incompatible_nul(
+    invalid_payload: JSONPayload,
+) -> None:
+    with pytest.raises(ValueError, match="payload"):
+        JobRequest(
+            task=TaskRef("send_email", 1),
+            queue=AppQueue.EMAILS,
+            payload=invalid_payload,
+        )
+
+
+def test_job_request_rejects_nul_in_idempotency_key() -> None:
+    with pytest.raises(ValueError, match="idempotency_key"):
+        JobRequest(
+            task=TaskRef("send_email", 1),
+            queue=AppQueue.EMAILS,
+            idempotency_key="request\x00id",
+        )
+
+
+def test_job_request_rejects_unencodable_idempotency_key() -> None:
+    with pytest.raises(ValueError, match="idempotency_key"):
+        JobRequest(
+            task=TaskRef("send_email", 1),
+            queue=AppQueue.EMAILS,
+            idempotency_key="bad" + chr(0xD800) + "id",
+        )
+
+
+def test_job_request_rejects_unencodable_queue_name() -> None:
+    class BadQueue(StrEnum):
+        INVALID = "emails" + chr(0xD800) + "bad"
+
+    with pytest.raises(ValueError, match="queue"):
+        JobRequest(task=TaskRef("send_email", 1), queue=BadQueue.INVALID)
+
+
+def test_job_request_rejects_invalid_queue_value() -> None:
+    class BadQueue(StrEnum):
+        INVALID = "emails\x00bad"
+
+    with pytest.raises(ValueError, match="queue"):
+        JobRequest(task=TaskRef("send_email", 1), queue=BadQueue.INVALID)
+
+
 def test_job_request_accepts_json_scalars_and_unicode() -> None:
     payload: JSONPayload = {
         "text": "Zażółć gęślą jaźń 🐢",
@@ -354,6 +408,12 @@ def test_execution_policy_rejects_non_positive_attempts(invalid_attempts: int) -
         ExecutionPolicy(max_attempts=invalid_attempts)
 
 
+def test_execution_policy_max_attempts_matches_postgresql_integer() -> None:
+    assert ExecutionPolicy(max_attempts=2**31 - 1).max_attempts == 2**31 - 1
+    with pytest.raises(ValueError, match="max_attempts"):
+        ExecutionPolicy(max_attempts=2**31)
+
+
 @pytest.mark.parametrize(
     "invalid_attempts",
     [True, False, "3", 3.0],
@@ -378,6 +438,20 @@ def test_execution_policy_rejects_non_positive_durations(
 ) -> None:
     with pytest.raises(ValueError, match=field_name):
         _policy_with_duration(field_name, invalid_duration)
+
+
+@pytest.mark.parametrize("invalid_days", [36_501, 999_999_999])
+@pytest.mark.parametrize("field_name", ["timeout", "retry_delay"])
+def test_execution_policy_rejects_duration_outside_safe_range(
+    invalid_days: int, field_name: str
+) -> None:
+    with pytest.raises(ValueError, match=field_name):
+        _policy_with_duration(field_name, timedelta(days=invalid_days))
+
+
+@pytest.mark.parametrize("field_name", ["timeout", "retry_delay"])
+def test_execution_policy_accepts_maximum_supported_duration(field_name: str) -> None:
+    assert _policy_with_duration(field_name, timedelta(days=36_500))
 
 
 @pytest.mark.parametrize("invalid_duration", [123, "30", True, 1.5])

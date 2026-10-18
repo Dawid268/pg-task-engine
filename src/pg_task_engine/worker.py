@@ -11,17 +11,18 @@ from time import monotonic
 from typing import cast
 from uuid import UUID, uuid4
 
+from pg_task_engine._postgresql import MAX_DURATION
 from pg_task_engine.domain import ErrorCode
-from pg_task_engine.engine import (
-    InvalidTransitionError,
-    StaleAttemptError,
-    TaskEngine,
-    UnknownTaskError,
-)
+from pg_task_engine.engine import StaleAttemptError, TaskEngine
 from pg_task_engine.job_progress import JobProgress
-from pg_task_engine.job_request import JSONValue
+from pg_task_engine.job_request import JSONPayload, JSONValue
+from pg_task_engine.task_ref import TaskRef
 
 _LOG = logging.getLogger(__name__)
+
+
+class _SchemaRejected(Exception):
+    """A task-specific JSON validator rejected an input or output."""
 
 
 async def _await_handler_result(value: Awaitable[object]) -> object:
@@ -89,6 +90,8 @@ class Worker[QueueT: StrEnum]:
             raise TypeError("worker_id must be a UUID or None")
         if not isinstance(poll_interval, timedelta) or poll_interval <= timedelta(0):
             raise ValueError("poll_interval must be a positive timedelta")
+        if poll_interval > MAX_DURATION:
+            raise ValueError("poll_interval must not exceed 36500 days")
         self.engine = engine
         self.queue = queue
         self.worker_id = worker_id if worker_id is not None else uuid4()
@@ -106,9 +109,25 @@ class Worker[QueueT: StrEnum]:
                 # missed heartbeats cannot authorize a stale write.
                 _LOG.warning("Heartbeat failed for attempt %s", attempt_id)
 
+    def _validate_input(self, task: TaskRef, payload: JSONPayload) -> None:
+        try:
+            self.engine.validate_input(task, payload)
+        except (ValueError, TypeError) as error:
+            raise _SchemaRejected from error
+
+    def _validate_output(self, task: TaskRef, value: JSONValue) -> None:
+        try:
+            self.engine.validate_output(task, value)
+        except (ValueError, TypeError) as error:
+            raise _SchemaRejected from error
+
     def run_once(self) -> bool:
         """Claim and execute one available task. Return False when idle."""
-        attempt = self.engine.claim(self.queue, worker_id=self.worker_id)
+        attempt = self.engine.claim(
+            self.queue,
+            worker_id=self.worker_id,
+            supported_tasks=self.engine.runnable_tasks,
+        )
         if attempt is None:
             return False
 
@@ -137,12 +156,12 @@ class Worker[QueueT: StrEnum]:
                 attempt_id=attempt.id,
                 worker_id=self.worker_id,
             )
-            self.engine.validate_input(job.task, job.payload)
+            self._validate_input(job.task, job.payload)
             handler = self.engine.handler_for(job.task)
             value = handler(context, job.payload)
             if inspect.isawaitable(value):
                 value = asyncio.run(_await_handler_result(value))
-            self.engine.validate_output(job.task, cast("JSONValue", value))
+            self._validate_output(job.task, cast("JSONValue", value))
             if context.cancellation_requested():
                 self.engine.confirm_cancel(attempt.id, worker_id=self.worker_id)
             else:
@@ -159,11 +178,10 @@ class Worker[QueueT: StrEnum]:
             # Never persist the raw exception message: it may contain secrets.
             code = (
                 ErrorCode.VALIDATION_ERROR
-                if isinstance(
-                    error, (UnknownTaskError, InvalidTransitionError, TypeError, ValueError)
-                )
+                if isinstance(error, _SchemaRejected)
                 else ErrorCode.EXECUTION_ERROR
             )
+            underlying_error = error.__cause__ if isinstance(error, _SchemaRejected) else error
             try:
                 self.engine.fail(
                     attempt.id,
@@ -171,7 +189,7 @@ class Worker[QueueT: StrEnum]:
                     retryable=code is ErrorCode.EXECUTION_ERROR,
                     code=code,
                     message="Task execution failed",
-                    exception_type=type(error).__name__,
+                    exception_type=type(underlying_error).__name__,
                     duration_ms=int((monotonic() - start) * 1000),
                 )
             except StaleAttemptError:

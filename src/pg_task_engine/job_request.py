@@ -6,6 +6,7 @@ from enum import StrEnum
 from math import isfinite
 from typing import cast
 
+from pg_task_engine._postgresql import INT32_MAX, MAX_DURATION, require_utf8
 from pg_task_engine.job_status import JobStatus
 from pg_task_engine.task_ref import TaskRef
 
@@ -18,7 +19,11 @@ _MAX_IDEMPOTENCY_KEY_LENGTH = 128
 
 
 def _validate_json_value(value: object, active: set[int]) -> None:
-    if value is None or type(value) in (bool, int, str):
+    if value is None or type(value) in (bool, int):
+        return
+    if type(value) is str:
+        if "\x00" in value:
+            raise ValueError("payload string must not contain a PostgreSQL-incompatible NUL")
         return
     if type(value) is float:
         if not isfinite(value):
@@ -42,6 +47,8 @@ def _validate_json_mapping(value: Mapping[object, object], active: set[int]) -> 
         for key, nested in value.items():
             if type(key) is not str:
                 raise TypeError("payload object keys must be strings")
+            if "\x00" in key:
+                raise ValueError("payload object keys must not contain NUL characters")
             _validate_json_value(nested, active)
     finally:
         active.remove(identity)
@@ -79,6 +86,8 @@ class ExecutionPolicy:
             raise TypeError("max_attempts must be an integer or None")
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least one")
+        if self.max_attempts > INT32_MAX:
+            raise ValueError("max_attempts exceeds PostgreSQL INTEGER range")
 
     @staticmethod
     def _validate_duration(field_name: str, duration: timedelta | None) -> None:
@@ -88,6 +97,8 @@ class ExecutionPolicy:
             raise TypeError(f"{field_name} must be a timedelta or None")
         if duration <= timedelta(0):
             raise ValueError(f"{field_name} must be positive")
+        if duration > MAX_DURATION:
+            raise ValueError(f"{field_name} cannot exceed 36500 days")
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +127,9 @@ class JobRequest[QueueT: StrEnum]:
     def _validate_queue(self) -> None:
         if not isinstance(self.queue, StrEnum) or isinstance(self.queue, JobStatus):
             raise TypeError("queue must be an application-defined StrEnum")
+        if not self.queue.value.strip() or "\x00" in self.queue.value:
+            raise ValueError("queue value must be nonblank and contain no NUL characters")
+        require_utf8(self.queue.value, field="queue value")
 
     def _validate_not_before(self) -> None:
         if self.not_before is None:
@@ -137,6 +151,9 @@ class JobRequest[QueueT: StrEnum]:
             return
         if type(self.idempotency_key) is not str:
             raise TypeError("idempotency_key must be a string or None")
+        if "\x00" in self.idempotency_key:
+            raise ValueError("idempotency_key must not contain NUL characters")
+        require_utf8(self.idempotency_key, field="idempotency_key")
         if not self.idempotency_key.strip():
             raise ValueError("idempotency_key must not be blank")
         if len(self.idempotency_key) > _MAX_IDEMPOTENCY_KEY_LENGTH:
