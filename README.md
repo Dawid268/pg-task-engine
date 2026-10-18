@@ -79,6 +79,13 @@ uv run --locked pre-commit validate-config
 
 Git hooks are not installed automatically. To enable them in a local checkout, run `uv run --locked pre-commit install`. No corporate GitLab pipeline or cloud configuration has been copied.
 
+## Guided learning
+
+See [the Python and GCP learning agreement](docs/learning/00-course.md) (Polish).
+Development proceeds through small, explained exercises, knowledge checks and verified commits.
+The learner writes the domain code; agents do not build later milestones without an explicit request.
+Repository instructions are in `AGENTS.md`.
+
 ## Learning milestones
 
 1. Packaging and adapted API boilerplate (current work).
