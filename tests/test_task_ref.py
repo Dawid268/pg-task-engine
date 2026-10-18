@@ -34,6 +34,17 @@ def test_task_ref_rejects_non_positive_version(invalid_version: int) -> None:
         TaskRef(name="generate_pdf", version=invalid_version)
 
 
+def test_task_ref_rejects_version_outside_postgresql_integer() -> None:
+    assert TaskRef("task", 2**31 - 1).version == 2**31 - 1
+    with pytest.raises(ValueError, match="version"):
+        TaskRef(name="generate_pdf", version=2**31)
+
+
+def test_task_ref_rejects_unencodable_unicode_name() -> None:
+    with pytest.raises(ValueError, match="name"):
+        TaskRef(name="generate_" + chr(0xD800) + "_pdf", version=1)
+
+
 @pytest.mark.parametrize("invalid_name", [123, None, False])
 def test_task_ref_rejects_non_string_name(invalid_name: object) -> None:
     with pytest.raises(TypeError, match="name"):

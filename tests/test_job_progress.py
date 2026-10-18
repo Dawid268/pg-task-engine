@@ -42,6 +42,56 @@ def test_job_progress_rejects_postgresql_incompatible_unit() -> None:
     assert error.value.code is JobProgressErrorCode.UNIT_CONTAINS_NUL
 
 
+def test_job_progress_rejects_unencodable_unicode_unit() -> None:
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(
+            completed=1,
+            total=2,
+            unit="bad" + chr(0xD800) + "unit",
+            revision=1,
+            updated_at=datetime(2026, 10, 18, tzinfo=UTC),
+        )
+    assert error.value.code.value == "unit_invalid_unicode"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value", "code_value"),
+    [
+        ("completed", 2**31, "completed_out_of_range"),
+        ("total", 2**31, "total_out_of_range"),
+        ("revision", 2**63, "revision_out_of_range"),
+    ],
+)
+def test_job_progress_rejects_values_outside_postgresql_storage(
+    field_name: str, invalid_value: int, code_value: str
+) -> None:
+    timestamp = datetime(2026, 10, 18, tzinfo=UTC)
+    completed: int = 0
+    total: int | None = None
+    revision: int = 1
+    if field_name == "completed":
+        completed = invalid_value
+    elif field_name == "total":
+        total = invalid_value
+    else:
+        revision = invalid_value
+    with pytest.raises(JobProgressValueError) as error:
+        JobProgress(completed, total, "tasks", revision, timestamp)
+    assert error.value.code.value == code_value
+
+
+def test_job_progress_accepts_database_integer_limits() -> None:
+    progress = JobProgress(
+        completed=2**31 - 1,
+        total=2**31 - 1,
+        unit="tasks",
+        revision=2**63 - 1,
+        updated_at=datetime(2026, 10, 18, tzinfo=UTC),
+    )
+    assert progress.completed == 2**31 - 1
+    assert progress.revision == 2**63 - 1
+
+
 @pytest.mark.parametrize(
     "non_integer_completed",
     [1.5, "two", None, True],

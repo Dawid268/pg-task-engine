@@ -830,6 +830,11 @@ def test_worker_without_handlers_does_not_touch_waiting_job(engine: TaskEngine[Q
     assert engine.attempts(job.id) == []
 
 
+def test_worker_rejects_poll_interval_outside_safe_range(engine: TaskEngine[Queue]) -> None:
+    with pytest.raises(ValueError, match="poll_interval"):
+        Worker(engine, queue=Queue.EMAILS, poll_interval=timedelta(days=999_999_999))
+
+
 def test_cli_can_enqueue_and_inspect_real_postgresql_job(
     engine: TaskEngine[Queue],
     monkeypatch: pytest.MonkeyPatch,
@@ -942,4 +947,49 @@ def test_invalid_error_details_are_rejected_before_postgresql(
     with pytest.raises(ValueError, match="exception_type"):
         engine.fail(attempt.id, worker_id=worker_id, exception_type="Invalid\x00Error")
 
+    assert engine.get(job.id).status is JobStatus.RUNNING
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("message", "contains" + chr(0xD800) + "bad"),
+        ("exception_type", "Error" + chr(0xD800) + "bad"),
+    ],
+)
+def test_invalid_unicode_error_details_rejected_before_postgresql(
+    engine: TaskEngine[Queue], field_name: str, value: str
+) -> None:
+    job = engine.enqueue(_request())
+    worker_id = uuid4()
+    attempt = engine.claim(Queue.EMAILS, worker_id=worker_id)
+    assert attempt is not None
+    engine.start(attempt.id, worker_id=worker_id)
+
+    with pytest.raises(ValueError, match=field_name):
+        engine.fail(
+            attempt.id,
+            worker_id=worker_id,
+            message=value if field_name == "message" else "Task execution failed",
+            exception_type=value if field_name == "exception_type" else None,
+        )
+    assert engine.get(job.id).status is JobStatus.RUNNING
+
+
+@pytest.mark.parametrize("operation", ["succeed", "fail"])
+def test_attempt_duration_outside_postgresql_bigint_is_rejected_before_write(
+    engine: TaskEngine[Queue], operation: str
+) -> None:
+    job = engine.enqueue(_request())
+    worker_id = uuid4()
+    attempt = engine.claim(Queue.EMAILS, worker_id=worker_id)
+    assert attempt is not None
+    engine.start(attempt.id, worker_id=worker_id)
+
+    if operation == "succeed":
+        with pytest.raises(ValueError, match="duration_ms"):
+            engine.succeed(attempt.id, worker_id=worker_id, result=None, duration_ms=2**63)
+    else:
+        with pytest.raises(ValueError, match="duration_ms"):
+            engine.fail(attempt.id, worker_id=worker_id, duration_ms=2**63)
     assert engine.get(job.id).status is JobStatus.RUNNING
