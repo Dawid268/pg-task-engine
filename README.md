@@ -3,20 +3,25 @@
 A PostgreSQL-backed durable task queue for Python 3.13, with a typed SDK,
 real SQL migrations, cooperative workers and an optional reference FastAPI app.
 
-**Status: local alpha implementation.** The core enqueue/claim/execute/result
+**Status: pre-release candidate `0.1.0a2` (not yet published).**
+The core enqueue/claim/execute/result
 flow works with PostgreSQL 16+, including idempotency, leases, retries,
 timeouts, progress, events and cooperative cancellation. It is **not** a
 guarantee of exactly-once execution, a hardened multi-tenant service or a
 production deployment. Neither PyPI publication nor GCP deployment has
 been performed.
 
-## Boilerplate source
+See [release instructions](docs/RELEASING.md) before publishing. The release
+workflow is deliberately manual and uses PyPI Trusted Publishing; no API
+tokens or production database credentials are stored in this repository.
 
-The requested reference is **`/home/dawid/Projekty/touchpoint-taxonomy`**, not `komino-api`.
+## Architecture and development origin
 
-The application factory, `app/modules` layout, settings accessor, async HTTP testing approach, Ruff rule families, pre-commit tooling and container build structure are adapted from that project. This is not a clone: business models, existing migrations, credentials, corporate `mxmz-*` dependencies and company deployment configuration are intentionally excluded.
-
-See `docs/learning/02-touchpoint-boilerplate.md` for the mapping and deliberate changes.
+The optional FastAPI reference application was adapted from a separate local
+boilerplate. Its configuration and tooling informed the development setup,
+but private business models, credentials, internal dependencies and deployment
+configuration are **not** included in the package.
+See `docs/learning/02-touchpoint-boilerplate.md` for the technical mapping.
 
 Project repository: https://github.com/Dawid268/pg-task-engine
 

@@ -7,7 +7,7 @@ ENV UV_LINK_MODE=copy \
     UV_NO_MANAGED_PYTHON=1 \
     UV_PYTHON_DOWNLOADS=never
 WORKDIR /opt/pg-task-engine
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 RUN uv sync --locked --no-dev --group api --no-editable
 

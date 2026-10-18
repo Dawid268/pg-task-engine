@@ -3,11 +3,14 @@
 Run with PG_TASK_ENGINE_TEST_DSN set.  Nothing is deleted in an arbitrary DB.
 """
 
+import hashlib
 import os
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import timedelta
 from enum import StrEnum
+from importlib.resources import files
+from multiprocessing import get_context
 from typing import cast
 from uuid import uuid4
 
@@ -20,6 +23,7 @@ from pg_task_engine.engine import (
     InvalidTransitionError,
     StaleAttemptError,
     TaskEngine,
+    TaskEngineError,
     UnknownTaskError,
 )
 from pg_task_engine.job_progress import JobProgress
@@ -83,6 +87,87 @@ def _request(
         payload={"recipient": "person@example.test", "settings": {"retry": True}},
         idempotency_key=key,
     )
+
+
+def _claim_from_separate_process(dsn: str) -> str | None:
+    """Each spawned process owns an independent PostgreSQL connection pool."""
+    with TaskEngine(
+        dsn,
+        queue_enum=Queue,
+        default_queue=Queue.EMAILS,
+        pool_size=2,
+    ) as engine:
+        claim = engine.claim(Queue.EMAILS, worker_id=uuid4())
+        return str(claim.job_id) if claim is not None else None
+
+
+def test_migrations_record_checksums_for_all_bundled_versions(
+    engine: TaskEngine[Queue],
+) -> None:
+    with psycopg.connect(engine.dsn) as conn:
+        rows = conn.execute(
+            "SELECT version, checksum FROM task_engine.schema_migrations ORDER BY version"
+        ).fetchall()
+        index_present = conn.execute(
+            "SELECT 1 FROM pg_indexes "
+            "WHERE schemaname = 'task_engine' AND indexname = 'attempts_deadline_active_idx'"
+        ).fetchone()
+
+    assert [version for version, _checksum in rows] == [1, 2]
+    for version, checksum in rows:
+        asset = next(
+            path
+            for path in files("pg_task_engine").joinpath("migrations").iterdir()
+            if path.name.startswith(f"{version:03d}_")
+        )
+        assert checksum == hashlib.sha256(asset.read_bytes()).hexdigest()
+    assert index_present is not None
+
+    engine.migrate()
+    with psycopg.connect(engine.dsn) as conn:
+        reread = conn.execute(
+            "SELECT version, checksum FROM task_engine.schema_migrations ORDER BY version"
+        ).fetchall()
+    assert reread == rows
+
+
+def test_migrate_rejects_changed_applied_sql(engine: TaskEngine[Queue]) -> None:
+    with psycopg.connect(engine.dsn) as conn:
+        original = conn.execute(
+            "SELECT checksum FROM task_engine.schema_migrations WHERE version = 1"
+        ).fetchone()
+        assert original is not None
+        conn.execute(
+            "UPDATE task_engine.schema_migrations SET checksum = %s WHERE version = 1",
+            ("0" * 64,),
+        )
+    try:
+        with pytest.raises(TaskEngineError, match="checksum"):
+            engine.migrate()
+    finally:
+        with psycopg.connect(engine.dsn) as conn:
+            conn.execute(
+                "UPDATE task_engine.schema_migrations SET checksum = %s WHERE version = 1",
+                (original[0],),
+            )
+
+
+def test_migrate_refuses_unknown_newer_database_version(engine: TaskEngine[Queue]) -> None:
+    future_version = 9999
+    with psycopg.connect(engine.dsn) as conn:
+        conn.execute(
+            "INSERT INTO task_engine.schema_migrations (version, checksum) VALUES (%s, %s)",
+            (future_version, "f" * 64),
+        )
+    try:
+        with pytest.raises(TaskEngineError, match=r"newer|unknown"):
+            engine.migrate()
+    finally:
+        with psycopg.connect(engine.dsn) as conn:
+            conn.execute(
+                "DELETE FROM task_engine.schema_migrations WHERE version = %s",
+                (future_version,),
+            )
 
 
 def test_migration_and_enqueue_roundtrip(engine: TaskEngine[Queue]) -> None:
@@ -283,6 +368,17 @@ def test_claim_is_atomic_among_concurrent_workers(engine: TaskEngine[Queue]) -> 
     assert claimed[0].job_id == job.id
     assert engine.get(job.id).attempts_count == 1
     assert len(engine.attempts(job.id)) == 1
+
+
+def test_claims_are_atomic_across_independent_processes(engine: TaskEngine[Queue]) -> None:
+    jobs = [engine.enqueue(_request()) for _ in range(8)]
+    with ProcessPoolExecutor(max_workers=4, mp_context=get_context("spawn")) as pool:
+        result = list(pool.map(_claim_from_separate_process, [engine.dsn] * 8))
+    assert len(result) == len(jobs)
+    assert set(result) == {str(job.id) for job in jobs}
+    for job in jobs:
+        assert engine.get(job.id).attempts_count == 1
+        assert len(engine.attempts(job.id)) == 1
 
 
 def test_retry_and_exhaustion(engine: TaskEngine[Queue]) -> None:
