@@ -61,8 +61,8 @@ audit databases were removed after the checks.
    now reject durations longer than 36,500 days before enqueue.
 
 These bugs are present in the frozen, historically tagged `v0.1.0a2`
-source. **Do not publish `0.1.0a2`.** The corrected candidate is
-`0.1.0a3` and must receive its own reviewed merge and new tag.
+source. **Do not publish `0.1.0a2`.** The corrected candidate
+`0.1.0a3` was published as the first public Alpha on 20 October 2026.
 
 ## Exclusions and residual risk
 
@@ -82,10 +82,11 @@ The audit does not establish:
 - Compatibility with future untested Python or PostgreSQL releases.
 - A successful upload to TestPyPI/PyPI or a production installation.
 
-The previous `v0.1.0a2` TestPyPI workflow failed with
-`invalid-publisher` because no matching TestPyPI Trusted Publisher had
-been registered. External registry configuration remains an independent
-release prerequisite. Do not publish or modify the old immutable tag.
+The previous `v0.1.0a2` TestPyPI workflow failed with `invalid-publisher`.
+Both registries' Trusted Publishers were subsequently configured, allowing
+successful TestPyPI and PyPI publication of `v0.1.0a3`. Registry
+authentication remains a prerequisite for **future** releases. Do not
+publish or modify the old immutable tag.
 
 For execution commands and publication gates see
 [OPERATIONS.md](OPERATIONS.md) and [RELEASING.md](RELEASING.md).

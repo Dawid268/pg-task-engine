@@ -1,10 +1,12 @@
 # Publishing pg-task-engine — release checklist
 
-This document prepares the **installable Python library**, not the optional
-FastAPI reference application. The current candidate is `0.1.0a3`.
-Nothing in this document has published a PyPI distribution or deployed GCP
-infrastructure. Public releases cannot be fully undone; do not reuse a
-published version number.
+This document describes publishing the **installable Python library**, not
+the optional FastAPI reference application.
+Version `0.1.0a3` was successfully published to TestPyPI, PyPI and
+[GitHub Releases](https://github.com/Dawid268/pg-task-engine/releases/tag/v0.1.0a3)
+on **20 October 2026** using GitHub OIDC Trusted Publishing. No GCP
+infrastructure was deployed. Public releases cannot be fully undone;
+never reuse a published version number.
 
 ## 1. Preconditions (release gate)
 
@@ -66,25 +68,31 @@ Official instructions:
 
 ## 3. Review, freeze and tag exact package source
 
-After a reviewed and green PR into `main`, use a **new, immutable annotated
-tag** matching the version in `pyproject.toml` (example shown for this
-unpublished candidate):
+For each **future** release, bump the version in `pyproject.toml`,
+`uv.lock`, `pg_task_engine.__version__`, and the changelog. After a
+reviewed and green PR into `main`, use a **new, immutable annotated
+tag** matching the updated version:
 
 ```bash
 git switch main
 git pull --ff-only origin main
-git tag -a v0.1.0a3 -m "pg-task-engine 0.1.0a3"
-git push origin v0.1.0a3
+VERSION="$(uv run --locked python -c 'import pg_task_engine; print(pg_task_engine.__version__)')"
+test -z "$(git ls-remote --tags origin "refs/tags/v$VERSION")" || {
+  echo "This version is already tagged; bump the package version first"
+  exit 1
+}
+git tag -a "v$VERSION" -m "pg-task-engine $VERSION"
+git push origin "v$VERSION"
 ```
 
-**Do not execute these commands until you intend to publish this particular
-commit.** This project uses `dev` for integration and leaves `main`
+**Never recreate or move the published `v0.1.0a3` tag.**
+This project uses `dev` for integration and leaves `main`
 unchanged during ordinary development. A tag push does **not** trigger the
 publication workflow automatically.
 
-The earlier `v0.1.0a2` tag is deliberately immutable and **must not be
-published**: the release audit found unhandled-task claims and incorrect
-retry classification. Create a new reviewed version/tag for these fixes.
+The earlier `v0.1.0a2` tag remains an immutable, unpublished historical
+snapshot and **must not be published**: the audit found unhandled-task claims
+and incorrect retry classification, resolved in public `0.1.0a3`.
 
 ## 4. Manually publish the verified artifacts
 

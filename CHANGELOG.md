@@ -1,6 +1,13 @@
 # Changelog
 
-## 0.1.0a3 (reliability-fix candidate; not yet published)
+## 0.1.0a3 (20 October 2026 — first public Alpha)
+
+- Published signed/provenance-backed distributions to PyPI and TestPyPI
+  using GitHub Actions OIDC Trusted Publishing. The tagged artifacts are
+  verified by SHA-256 and listed in the GitHub Release.
+- Validated clean PyPI installations on Python 3.13 and 3.14, including
+  migrations, CLI enqueue/inspect, worker execution, progress and results
+  with a disposable PostgreSQL database.
 
 - Validate PostgreSQL INTEGER/BIGINT storage limits before persistence:
   task contract versions, attempt limits, progress counters/revisions and
