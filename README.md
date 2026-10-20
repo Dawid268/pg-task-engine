@@ -1,17 +1,24 @@
 # pg-task-engine
 
-A PostgreSQL-backed durable task queue for Python 3.13, with a typed SDK,
+A PostgreSQL-backed durable task queue for Python 3.13 and 3.14, with a typed SDK,
 real SQL migrations, cooperative workers and an optional reference FastAPI app.
 
-**Status: pre-release candidate `0.1.0a3` (not yet published).**
+**Status: public Alpha `0.1.0a3`, published 20 October 2026.**
+[Install from PyPI](https://pypi.org/project/pg-task-engine/0.1.0a3/) or
+[see the GitHub Release](https://github.com/Dawid268/pg-task-engine/releases/tag/v0.1.0a3).
+
+```bash
+pip install pg-task-engine==0.1.0a3
+```
+
 The core enqueue/claim/execute/result
 flow works with PostgreSQL 16+, including idempotency, leases, retries,
 timeouts, progress, events and cooperative cancellation. It is **not** a
 guarantee of exactly-once execution, a hardened multi-tenant service or a
-production deployment. Neither PyPI publication nor GCP deployment has
-been performed.
+production deployment. PyPI/TestPyPI publication is complete; no GCP
+deployment has been performed.
 
-See [release instructions](docs/RELEASING.md) before publishing. The release
+See [release instructions](docs/RELEASING.md) for future versions. The release
 workflow is deliberately manual and uses PyPI Trusted Publishing; no API
 tokens or production database credentials are stored in this repository.
 See also the [reliability audit](docs/RELIABILITY-AUDIT.md) for verified
@@ -27,7 +34,9 @@ See `docs/learning/02-touchpoint-boilerplate.md` for the technical mapping.
 
 Project repository: https://github.com/Dawid268/pg-task-engine
 
-`pg-task-engine` remains a working package name. No PyPI release or registry reservation has been made.
+`pg-task-engine` is the registered package name on
+[PyPI](https://pypi.org/project/pg-task-engine/) and
+[TestPyPI](https://test.pypi.org/project/pg-task-engine/).
 
 ## Two separate concerns
 
